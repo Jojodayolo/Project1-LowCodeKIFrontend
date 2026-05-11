@@ -1,0 +1,134 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<process xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="process.xsd"
+         name="Vester_Sensitivity_Analysis">
+
+  <variables>
+    <var name="system_description">Urban mobility system: includes public transport, private vehicles, and environmental
+      factors within a metropolitan area.
+    </var>
+    <var name="goal">Understand key drivers and sensitive factors influencing sustainable mobility.</var>
+    <var name="numberOfVariables">10</var>
+  </variables>
+
+  <containers>
+    <container name="system_context"/>
+    <container name="influence_matrix"/>
+    <container name="effect_system"/>
+    <container name="sensitivity_interpretation"/>
+  </containers>
+
+  <outputs>
+    <output name="system_context" type="json"/>
+    <output name="influence_matrix" type="json"/>
+    <output name="effect_system" type="json"/>
+    <output name="sensitivity_interpretation" type="json"/>
+  </outputs>
+
+  <agents>
+  </agents>
+
+  <steps>
+
+    <!-- STEP 1: System Definition -->
+    <step name="extract_system_definition" writeTo="system_context">
+      <system>
+        You are an expert in systems analysis applying Vester's methodology.
+      </system>
+      <prompt>
+        Extract the system definition from the given context:
+        - Identify the system name, goal, and boundaries.
+        - List all relevant stakeholders (at least five).
+        - Identify major subsystems.
+        - Mentioned variables should be extracted if available.
+        System description: {{system_description}}
+        Goal: {{goal}}
+      </prompt>
+      <response_schema>
+class Stakeholder(BaseModel):
+  name: str
+
+class SystemDefinition(BaseModel):
+  system_name: str
+  system_description: str
+  goal: str
+  boundaries: str
+  stakeholders: list[Stakeholder]
+  subsystems: list[str]
+  mentioned_variables: list[str]
+      </response_schema>
+    </step>
+
+    <!-- STEP 2: Influence Matrix -->
+    <step name="build_influence_matrix" readFrom="system_context" writeTo="influence_matrix">
+      <system>
+        You are a systems thinking expert conducting a Vester Sensitivity Analysis.
+      </system>
+      <prompt>
+        For each pair of system variables, evaluate how strongly Variable A influences Variable B.
+        Use the scale:
+        0 = no influence
+        1 = weak influence
+        2 = moderate influence
+        3 = strong influence
+        Variables to analyze: {{mentioned_variables}}
+        Number of variables: {{numberOfVariables}}
+      </prompt>
+      <response_schema>
+class InfluenceMatrix(BaseModel):
+  matrix: dict[str, dict[str, int]]
+      </response_schema>
+    </step>
+
+    <!-- STEP 3: Effect Direction System -->
+    <step name="build_effect_system" readFrom="influence_matrix" writeTo="effect_system">
+      <system>
+        You are assigning the qualitative direction for one causal link in a Vester Sensitivity Analysis.
+      </system>
+      <prompt>
+        For each retained causal connection (non-zero in the influence matrix), decide:
+        If Variable A increases, does Variable B increase (+1) or decrease (-1)?
+        Consider the real-world relationships in the system.
+        Influence matrix: {{influence_matrix}}
+      </prompt>
+      <response_schema>
+class Effect(BaseModel):
+  from_var: str
+  to_var: str
+  sign: int
+
+class EffectSystem(BaseModel):
+  effects: list[Effect]
+      </response_schema>
+    </step>
+
+    <!-- STEP 4: Interpretation -->
+    <step name="interpret_sensitivity" readFrom="system_context influence_matrix effect_system"
+          writeTo="sensitivity_interpretation">
+      <system>
+        You are a systems thinking expert specialized in Vester sensitivity analysis.
+      </system>
+      <prompt>
+        Interpret the complete Vester sensitivity analysis:
+        - Summarize the system and boundaries.
+        - Explain Active Sum (AS), Passive Sum (PS), P and Q.
+        - Identify drivers (high AS), reactives (high PS), buffers, and critical variables.
+        - Interpret the effect system and feedback loops.
+        - Recommend interventions and a roadmap.
+        System context: {{system_context}}
+        Influence matrix: {{influence_matrix}}
+        Effect system: {{effect_system}}
+      </prompt>
+      <response_schema>
+class VesterInterpretation(BaseModel):
+  summary: str
+  drivers: list[str]
+  reactives: list[str]
+  buffers: list[str]
+  critical: list[str]
+  recommendations: list[str]
+      </response_schema>
+    </step>
+
+  </steps>
+</process>

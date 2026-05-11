@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<process xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="process.xsd"
+         name="QOC"
+         model="gpt-4.1-nano"
+         llmHost=""
+         type="QOC">
+
+  <variables>
+    <var name="question">Which cryptocurrency could i best invest in in the current market situation?</var>
+    <var name="context">I am a new investor in cryptocurrencies and i would like to invest a small amount, approximately 10000$, into one cryptocurrency. I am aware that this brings a lot of price fluctuation, but i want to get familiar with this kind of market!</var>
+    <var name="numberOfStakeholders">5</var>
+  </variables>
+
+  <outputs>
+    <output name="stakeholders" type="json"/>
+    <output name="optionsRaw" type="json"/>
+    <output name="criteriaRaw" type="json"/>
+    <output name="options" type="json"/>
+    <output name="criteria" type="json"/>
+    <output name="criteriaWeights" type="json"/>
+    <output name="evaluatedOptions" type="json"/>
+  </outputs>
+
+  <agents>
+  </agents>
+
+  <steps>
+
+    <step name="collect_stakeholders" responseFormat="Stakeholders" writeTo="stakeholders">
+      <system>
+        You are an experienced business consultant. One of your major methodologies in order to answer questions are profound analysis
+        of the given question with the help of the question-option-criteria (QOC) methdology.
+      </system>
+
+      <prompt>
+        Identify the top {{numberOfStakeholders}} most important stakeholders (role + roleDescription). The stakeholders should be different subject matter experts
+        for the question: "{{question}}"
+        Context: "{{context}}"
+        Return JSON: { "stakeholders": [ { "role": "", "roleDescription": "" } ] }
+        STRONGLY adhere to the given JSON format
+      </prompt>
+    </step>
+
+    <step name="collect_options" responseFormat="Options" writeTo="optionsRaw" >
+      <system>
+        You are a subject expert acting strictly in your role: {{agent.role}}.
+        Role description: {{agent.roleDescription}}.
+      </system>
+      <prompt>
+        Identify five possible answers to the question: "{{question}}"
+        Context: "{{context}}"
+        Adhere strictly to your role.
+      </prompt>
+    </step>
+
+    <step name="collect_criteria" fromAgents="stakeholders" responseFormat="Criteria" writeTo="criteriaRaw">
+      <system>
+        You are a subject expert acting strictly in your role: {{agent.role}}.
+        Role description: {{agent.roleDescription}}.
+      </system>
+      <prompt>
+        Identify five criteria to evaluate answers to: "{{question}}"
+        Context: "{{context}}"
+        Adhere strictly to your role.
+      </prompt>
+    </step>
+
+    <step name="consolidate_options" responseFormat="Options" readFrom="optionsRaw" writeTo="options">
+      <system>
+        You consolidate options from multiple agents. Merge duplicates, keep unique semantics.
+      </system>
+      <prompt>
+        Consolidate the following options into unique entries. Do not lose information.
+        Return JSON: { "options": [ "..." ] }
+      </prompt>
+    </step>
+
+    <step name="consolidate_criteria" responseFormat="Criteria" readFrom="criteriaRaw" writeTo="criteria">
+      <system>
+        You consolidate criteria from multiple agents. Merge duplicates, keep unique semantics.
+      </system>
+      <prompt>
+        Consolidate the following criteria into unique entries. Return JSON: { "criteria": [ "..." ] }
+      </prompt>
+    </step>
+
+    <step name="weight_criteria" fromAgents="stakeholders" responseFormat="WeightedCriteriaList" readFrom="criteria" writeTo="criteriaWeights">
+      <system>
+        You are a subject expert acting strictly in your role: {{agent.role}}.
+        Role description: {{agent.roleDescription}}.
+      </system>
+      <prompt>
+        Given criteria: {{criteria.list}}
+        Question: "{{question}}"
+        Context: "{{context}}"
+        Weight each criterion from 0-100 as per scale. Do not add/change criteria.
+        Return JSON: { "criteriaWeights": [ { "criterion": "", "weight": 0 } ] }
+      </prompt>
+    </step>
+
+    <step name="evaluate_options" fromAgents="stakeholders" responseFormat="EvaluatedOptions" readFrom="criteria options" writeTo="evaluatedOptions">
+      <system>
+        You are a subject expert acting strictly in your role: {{agent.role}}.
+        Role description: {{agent.roleDescription}}.
+      </system>
+      <prompt>
+        Options: {{options.list}}
+        Criteria: {{criteria.list}}
+        Evaluate how each option supports each criterion (0-100). Do not rename.
+        Return JSON: { "evaluations": [ { "option": "", "scores": [ { "criterion": "", "score": 0 } ] } ] }
+      </prompt>
+    </step>
+
+  </steps>
+</process>

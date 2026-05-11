@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<process xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="process.xsd"
+         name="Normal_Form_Game_Analysis">
+
+  <variables>
+    <var name="user_prompt">User's scenario description for the strategic game analysis</var>
+  </variables>
+
+  <containers>
+    <container name="game_structure"/>
+    <container name="payoff_matrix"/>
+    <container name="game_analysis"/>
+  </containers>
+
+  <outputs>
+    <output name="game_structure" type="json"/>
+    <output name="payoff_matrix" type="json"/>
+    <output name="game_analysis" type="json"/>
+    <output name="strategic_interpretation" type="json"/>
+  </outputs>
+
+  <steps>
+
+    <!-- STEP 1: Extract Players, Goal, and Strategies -->
+    <step name="build_game_structure" writeTo="game_structure">
+      <system>You are a game theory assistant extracting problem structure.</system>
+      <prompt>From the scenario, extract two players, goal, unit, value range, and strategies for each player.
+
+        Scenario: {{user_prompt}}
+      </prompt>
+      <response_schema>
+class Strategy(BaseModel):
+  name: str
+  description: str
+
+class GameStructure(BaseModel):
+  players: list[str]
+  goal: str
+  unit: str
+  value_range: list[float]
+  strategies: dict[str, list[Strategy]]
+  matrix_template: dict
+      </response_schema>
+    </step>
+
+    <!-- STEP 2: Generate Payoff Matrix -->
+    <step name="build_payoff_matrix" readFrom="game_structure" writeTo="payoff_matrix">
+      <system>You are a game theorist assigning payoffs to strategy combinations.</system>
+      <prompt>For each strategy pair combination, assign payoffs [p1, p2] within the value range.
+
+        Consider the strategic interaction between the strategies and both players' objectives.
+
+        Game structure: {{game_structure}}
+      </prompt>
+      <response_schema>
+class PayoffMatrix(BaseModel):
+  payoff_matrix: dict[str, dict[str, list[float]]]
+      </response_schema>
+    </step>
+
+    <!-- STEP 3: Analyze Game -->
+    <step name="analyze_game" readFrom="game_structure payoff_matrix" writeTo="game_analysis">
+      <system>You are a game theory analyst computing strategic equilibria.</system>
+      <prompt>Analyze the payoff matrix to find dominant strategies, Nash equilibria, and Pareto optimal outcomes.
+
+        Game structure: {{game_structure}}
+        Payoff matrix: {{payoff_matrix}}
+      </prompt>
+      <response_schema>
+class AnalyzeResult(BaseModel):
+  dominant_strategies: dict[str, str | None]
+  nash_equilibria: list[list[str]]
+  pareto_optima: list[list[str]]
+      </response_schema>
+    </step>
+
+    <!-- STEP 4: Interpret Results -->
+    <step name="interpret_results" readFrom="game_analysis game_structure payoff_matrix"
+          writeTo="strategic_interpretation">
+      <system>You are a strategic analysis expert in game theory.</system>
+      <prompt>Interpret the game analysis for the user:
+
+        Scenario: {{user_prompt}}
+        Game structure: {{game_structure}}
+        Game analysis: {{game_analysis}}
+
+        Explain:
+        - What Nash equilibria mean in this context
+        - Which outcomes are Pareto optimal and the trade-offs
+        - Whether dominant strategies exist
+        - Best strategic recommendation for each player
+      </prompt>
+      <response_schema>
+class Interpretation(BaseModel):
+  nash_explanation: str
+  pareto_analysis: str
+  dominant_strategies_explanation: str
+  recommendations: dict[str, str]
+  summary: str
+      </response_schema>
+    </step>
+
+  </steps>
+
+</process>

@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           elementFormDefault="qualified">
+
+  <!-- Root: process -->
+  <xs:element name="process">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="variables" type="variablesType" minOccurs="0"/>
+        <xs:element name="containers" type="containersType" minOccurs="0"/>
+        <xs:element name="outputs" type="outputsType" minOccurs="0"/>
+        <xs:element name="agents" type="agentsType" minOccurs="0"/>
+        <xs:element name="steps" type="stepsType" minOccurs="1"/>
+      </xs:sequence>
+
+      <!-- Root attributes -->
+      <xs:attribute name="name" type="xs:string" use="required"/>
+      <xs:attribute name="model" type="xs:string" use="optional"/>
+      <xs:attribute name="llmHost" type="xs:string" use="optional"/>
+      <xs:attribute name="type" type="xs:string" use="optional"/>
+    </xs:complexType>
+  </xs:element>
+
+  <!-- VARIABLES -->
+  <xs:complexType name="variablesType">
+    <xs:sequence>
+      <xs:element name="var" maxOccurs="unbounded">
+        <xs:complexType>
+          <xs:simpleContent>
+            <xs:extension base="xs:string">
+              <xs:attribute name="name" type="xs:string" use="required"/>
+            </xs:extension>
+          </xs:simpleContent>
+        </xs:complexType>
+      </xs:element>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- CONTAINERS -->
+  <xs:complexType name="containersType">
+    <xs:sequence>
+      <xs:element name="container" maxOccurs="unbounded">
+        <xs:complexType>
+          <xs:attribute name="name" type="xs:string" use="required"/>
+        </xs:complexType>
+      </xs:element>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- OUTPUTS (optional) -->
+  <xs:complexType name="outputsType">
+    <xs:sequence>
+      <xs:element name="output" maxOccurs="unbounded">
+        <xs:complexType>
+          <xs:attribute name="name" type="xs:string" use="required"/>
+          <xs:attribute name="type" type="xs:string" use="required"/>
+        </xs:complexType>
+      </xs:element>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- AGENTS (optional) -->
+  <xs:complexType name="agentsType">
+    <xs:sequence>
+      <xs:element name="agent" maxOccurs="unbounded" minOccurs="0">
+        <xs:complexType>
+          <xs:attribute name="role" type="xs:string" use="required"/>
+          <xs:attribute name="roleDescription" type="xs:string" use="optional"/>
+        </xs:complexType>
+      </xs:element>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- STEPS -->
+  <xs:complexType name="stepsType">
+    <xs:sequence>
+      <xs:element name="step" maxOccurs="unbounded">
+        <xs:complexType>
+          <xs:sequence>
+
+            <!-- system prompt -->
+            <xs:element name="system" type="xs:string" minOccurs="0"/>
+
+            <!-- user prompt -->
+            <xs:element name="prompt" type="xs:string" minOccurs="0"/>
+
+            <!-- response schema (Pydantic code) -->
+            <xs:element name="response_schema" minOccurs="0">
+              <xs:complexType mixed="true">
+                <xs:simpleContent>
+                  <xs:extension base="xs:string"/>
+                </xs:simpleContent>
+              </xs:complexType>
+            </xs:element>
+
+          </xs:sequence>
+
+          <!-- step attributes -->
+          <xs:attribute name="name" type="xs:string" use="required"/>
+          <xs:attribute name="writeTo" type="xs:string" use="optional"/>
+          <xs:attribute name="readFrom" type="xs:string" use="optional"/>
+          <xs:attribute name="fromAgents" type="xs:string" use="optional"/>
+          <xs:attribute name="loopOver" type="xs:string" use="optional"/>
+
+        </xs:complexType>
+      </xs:element>
+    </xs:sequence>
+  </xs:complexType>
+
+</xs:schema>

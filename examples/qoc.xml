@@ -1,0 +1,148 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<process xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="process.xsd"
+         name="QOC">
+
+  <containers>
+    <container name="stakeholders"/>
+    <container name="optionsRaw"/>
+    <container name="criteriaRaw"/>
+    <container name="options"/>
+    <container name="criteria"/>
+    <container name="criteriaWeights"/>
+    <container name="evaluatedOptions"/>
+  </containers>
+
+  <steps>
+
+    <!-- STEP 1: Collect Stakeholders -->
+    <step name="collect_stakeholders" writeTo="stakeholders">
+      <system>
+        You are an experienced business consultant. One of your major methodologies in order to answer questions
+        are profound analysis of the given question with the help of the question-option-criteria (QOC) methodology.
+      </system>
+      <prompt>
+        Identify the top {{numberOfStakeholders}} most important stakeholders (role + roleDescription). The
+        stakeholders should be different subject matter experts for the question: "{{question}}"
+        Context: "{{context}}"
+      </prompt>
+      <response_schema>
+        class Stakeholder(BaseModel):
+          role: str
+          roleDescription: str
+
+        class StakeholdersContainer(BaseModel):
+          stakeholders: list[Stakeholder]
+      </response_schema>
+    </step>
+
+    <!-- STEP 2: Collect Options -->
+    <step name="collect_options" loopOver="stakeholders" readFrom="stakeholders" writeTo="optionsRaw">
+      <system>
+        You are a subject expert acting strictly in your role: {{role}}.
+        Role description: {{roleDescription}}.
+      </system>
+      <prompt>
+        Identify five possible answers to the question: "{{question}}"
+        Context: "{{context}}"
+        Adhere strictly to your role.
+      </prompt>
+      <response_schema>
+class Options(BaseModel):
+  options: list[str]
+      </response_schema>
+    </step>
+
+    <!-- STEP 3: Collect Criteria -->
+    <step name="collect_criteria" loopOver="stakeholders" readFrom="stakeholders" writeTo="criteriaRaw">
+      <system>
+        You are a subject expert acting strictly in your role: {{role}}.
+        Role description: {{roleDescription}}.
+      </system>
+      <prompt>
+        Identify five criteria to evaluate answers to: "{{question}}"
+        Context: "{{context}}"
+        Adhere strictly to your role.
+      </prompt>
+      <response_schema>
+class Criteria(BaseModel):
+  criteria: list[str]
+      </response_schema>
+    </step>
+
+    <!-- STEP 4: Consolidate Options -->
+    <step name="consolidate_options" readFrom="optionsRaw" writeTo="options">
+      <system>You consolidate options from multiple agents. Merge duplicates, keep unique semantics.</system>
+      <prompt>
+        Consolidate the following options into unique entries. Do not lose information.
+        Options: {{optionsRaw}}
+      </prompt>
+      <response_schema>
+class Options(BaseModel):
+  options: list[str]
+      </response_schema>
+    </step>
+
+    <!-- STEP 5: Consolidate Criteria -->
+    <step name="consolidate_criteria" readFrom="criteriaRaw" writeTo="criteria">
+      <system>You consolidate criteria from multiple agents. Merge duplicates, keep unique semantics.</system>
+      <prompt>
+        Consolidate the following criteria into unique entries.
+        Criteria: {{criteriaRaw}}
+      </prompt>
+      <response_schema>
+class Criteria(BaseModel):
+  criteria: list[str]
+      </response_schema>
+    </step>
+
+    <!-- STEP 6: Weight Criteria -->
+    <step name="weight_criteria" loopOver="stakeholders" readFrom="stakeholders criteria" writeTo="criteriaWeights">
+      <system>
+        You are a subject expert acting strictly in your role: {{role}}.
+        Role description: {{roleDescription}}.
+      </system>
+      <prompt>
+        Given criteria: {{criteria}}
+        Question: "{{question}}"
+        Context: "{{context}}"
+        Weight each criterion from 0-100 according to importance. Do not add/change criteria.
+      </prompt>
+<response_schema>
+class CriterionWeight(BaseModel):
+  criterion: str
+  weight: int
+
+class CriteriaWeightsContainer(BaseModel):
+  criteriaWeights: list[CriterionWeight]
+</response_schema>
+
+    </step>
+
+    <!-- STEP 7: Evaluate Options -->
+    <step name="evaluate_options" loopOver="stakeholders" readFrom="stakeholders criteria options" writeTo="evaluatedOptions">
+      <system>
+        You are a subject expert acting strictly in your role: {{role}}.
+        Role description: {{roleDescription}}.
+      </system>
+      <prompt>
+        Options: {{options}}
+        Criteria: {{criteria}}
+        Evaluate how each option supports each criterion (0-100). Do not rename options or criteria.
+      </prompt>
+<response_schema>
+class Score(BaseModel):
+  criterion: str
+  score: int
+
+class Evaluation(BaseModel):
+  option: str
+  scores: list[Score]
+
+class EvaluationsContainer(BaseModel):
+  evaluations: list[Evaluation]
+</response_schema>
+    </step>
+
+  </steps>
+</process>

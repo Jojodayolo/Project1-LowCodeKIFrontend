@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<process xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="process.xsd"
+         name="Sequence_Game_Analysis">
+
+  <containers>
+    <container name="players_goal" />
+    <container name="roles" />
+    <container name="game_tree" />
+  </containers>
+
+  <steps>
+
+    <!-- STEP 1: Extract players and game goal -->
+    <step name="extract_players_goal" writeTo="players_goal">
+      <system>
+        You are a game theory assistant.
+      </system>
+
+      <prompt>
+        From the scenario, extract exactly two players, the overall game goal, the payoff unit, and the value range.
+        Scenario: {{scenario}}
+      </prompt>
+
+      <response_schema>
+class PlayersGoal(BaseModel):
+  players: list[str]
+  goal: str
+  unit: str
+  valueRange: str
+      </response_schema>
+    </step>
+
+    <!-- STEP 2: Assign player roles -->
+    <step name="extract_roles" readFrom="players_goal" writeTo="roles">
+      <system>
+        You are a decision-support assistant for strategic games.
+      </system>
+
+      <prompt>
+        Assign a contextual role to each player based on the scenario and objective.
+        Current Players: {{players_goal}}
+      </prompt>
+
+      <response_schema>
+class PlayerRole(BaseModel):
+  player: str
+  role: str
+
+class RolesContainer(BaseModel):
+  roles: list[PlayerRole]
+      </response_schema>
+    </step>
+
+    <!-- STEP 3: Build the game tree -->
+    <step name="build_game_tree" readFrom="players_goal roles" writeTo="game_tree">
+      <system>
+        You are a sequential-decision game builder.
+      </system>
+
+      <prompt>
+        Construct a decision tree up to depth {{maxDepth}} representing the sequence of decisions between both players.
+        Players goals: {{players_goal}}
+        Roles: {{roles}}
+      </prompt>
+
+<response_schema>
+from typing import Literal, Optional
+
+class DecisionAction(BaseModel):
+  action: str
+  next: dict
+
+class GameTree(BaseModel):
+  type: Literal["decision", "terminal"]
+  player: Optional[str] = None
+  actions: Optional[list[DecisionAction]] = None
+  payoffs: Optional[dict[str, float]] = None
+</response_schema>
+
+    </step>
+
+    <!-- STEP 4: Assign payoffs -->
+    <step name="assign_payoffs" readFrom="game_tree roles players_goal" writeTo="game_tree">
+      <system>
+        You are a neutral game-theoretic evaluation agent.
+      </system>
+
+      <prompt>
+        For each terminal path in the game tree, assign numeric payoffs (within the given range and unit).
+        Game tree: {{game_tree}}
+      </prompt>
+
+<response_schema>
+from typing import Literal, Optional
+
+class DecisionAction(BaseModel):
+  action: str
+  next: dict
+
+class GameTree(BaseModel):
+  type: Literal["decision", "terminal"]
+  player: Optional[str] = None
+  actions: Optional[list[DecisionAction]] = None
+  payoffs: Optional[dict[str, float]] = None
+</response_schema>
+    </step>
+
+  </steps>
+</process>

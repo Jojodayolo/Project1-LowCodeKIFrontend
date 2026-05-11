@@ -1,0 +1,141 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE process SYSTEM "process.dtd">
+<process xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="process.dtd"
+         name="Risiko_Analyse"
+         model="gpt-4.1-nano"
+         llmHost=""
+         type="RISK">
+
+  <variables>
+    <var name="project_description">Description of the project or initiative</var>
+    <var name="context">Additional context</var>
+    <var name="numberOfRisks">Number of risks to identify (default: 10)</var>
+  </variables>
+
+  <containers>
+    <container name="project_context"/>
+    <container name="risks"/>
+    <container name="risk_assessment"/>
+    <container name="risk_mapping"/>
+    <container name="mitigation_strategy"/>
+  </containers>
+
+  <outputs>
+    <output name="risks" type="json"/>
+    <output name="risk_assessment" type="json"/>
+    <output name="risk_mapping" type="json"/>
+    <output name="mitigation_strategy" type="json"/>
+  </outputs>
+
+  <steps>
+
+    <!-- STEP 1: Extract Project Context and Identify Risks -->
+    <step name="extract_context_and_risks" writeTo="project_context risks">
+      <system>
+        You are a risk analysis expert. Identify {{numberOfRisks}} key risks for the project.
+      </system>
+      <prompt>
+        Project description: {{project_description}}
+        Context: {{context}}
+
+        Identify {{numberOfRisks}} potential risks with their name and category (technical, organizational, external, financial).
+      </prompt>
+      <response_schema>
+class Risk(BaseModel):
+  name: str
+  category: str
+
+class ProjectContextAndRisks(BaseModel):
+  risks: list[Risk]
+      </response_schema>
+    </step>
+
+    <!-- STEP 2: Assess Risk Impact and Probability -->
+    <step name="assess_risks" readFrom="risks" writeTo="risk_assessment">
+      <system>
+        You analyze individual risks and assess their impact and probability.
+      </system>
+      <prompt>
+        For each risk, assess:
+        - Probability of occurrence (0-100)
+        - Impact if occurs (0-100)
+        - Description of the risk
+
+        Risks: {{risks}}
+        Project: {{project_description}}
+      </prompt>
+      <response_schema>
+class RiskProfile(BaseModel):
+  name: str
+  probability: int
+  impact: int
+  description: str
+
+class RiskAssessment(BaseModel):
+  profiles: list[RiskProfile]
+      </response_schema>
+    </step>
+
+    <!-- STEP 3: Map and Classify Risks -->
+    <step name="map_risks" readFrom="risks risk_assessment" writeTo="risk_mapping">
+      <system>
+        You classify risks into strategic groups based on probability and impact.
+      </system>
+      <prompt>
+        Classify risks into 4 groups:
+        - Critical (high probability, high impact)
+        - High (high probability OR high impact)
+        - Medium (medium probability and impact)
+        - Low (low probability and impact)
+
+        Risks: {{risks}}
+        Assessment: {{risk_assessment}}
+      </prompt>
+      <response_schema>
+class RiskGroup(BaseModel):
+  name: str
+  risks: list[str]
+  strategy: str
+
+class RiskMapping(BaseModel):
+  critical: RiskGroup
+  high: RiskGroup
+  medium: RiskGroup
+  low: RiskGroup
+      </response_schema>
+    </step>
+
+    <!-- STEP 4: Develop Mitigation Strategy -->
+    <step name="develop_mitigation" readFrom="risk_mapping risk_assessment" writeTo="mitigation_strategy">
+      <system>
+        You develop mitigation tactics for each risk group.
+      </system>
+      <prompt>
+        Create mitigation strategy for all risk groups:
+
+        Mapping: {{risk_mapping}}
+        Assessment: {{risk_assessment}}
+
+        For each group provide:
+        - Mitigation approach
+        - Prevention measures
+        - Response plan if risk occurs
+        - Responsible party
+      </prompt>
+      <response_schema>
+class MitigationPlan(BaseModel):
+  group_name: str
+  approach: str
+  prevention: list[str]
+  response: str
+  responsible: str
+
+class MitigationStrategy(BaseModel):
+  plans: list[MitigationPlan]
+      </response_schema>
+    </step>
+
+  </steps>
+
+</process>

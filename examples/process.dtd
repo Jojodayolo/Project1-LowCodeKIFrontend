@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!ELEMENT process (variables?, containers?, outputs?, agents?, steps)>
+<!ATTLIST process
+  name CDATA #REQUIRED
+  model CDATA #IMPLIED
+  llmHost CDATA #IMPLIED
+  type CDATA #IMPLIED
+>
+
+<!-- VARIABLES -->
+<!ELEMENT variables (var+)>
+<!ELEMENT var (#PCDATA)>
+<!ATTLIST var
+  name CDATA #REQUIRED
+>
+
+<!-- CONTAINERS -->
+<!ELEMENT containers (container+)>
+<!ELEMENT container EMPTY>
+<!ATTLIST container
+  name CDATA #REQUIRED
+>
+
+<!-- OUTPUTS -->
+<!ELEMENT outputs (output+)>
+<!ELEMENT output EMPTY>
+<!ATTLIST output
+  name CDATA #REQUIRED
+  type CDATA #REQUIRED
+>
+
+<!-- AGENTS -->
+<!ELEMENT agents (agent*)>
+<!ELEMENT agent EMPTY>
+<!ATTLIST agent
+  role CDATA #REQUIRED
+  roleDescription CDATA #IMPLIED
+>
+
+<!-- STEPS -->
+<!ELEMENT steps (step+)>
+
+<!--
+  system, prompt, response_schema are all optional
+  order is fixed but matches current XML usage
+-->
+<!ELEMENT step (system?, prompt?, response_schema?)>
+<!ATTLIST step
+  name CDATA #REQUIRED
+  writeTo CDATA #IMPLIED
+  readFrom CDATA #IMPLIED
+  fromAgents CDATA #IMPLIED
+  loopOver CDATA #IMPLIED
+>
+
+<!ELEMENT system (#PCDATA)>
+<!ELEMENT prompt (#PCDATA)>
+
+<!-- Pydantic code / free text -->
+<!ELEMENT response_schema (#PCDATA)>
