@@ -1,4 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
+// Import the custom nodes
+import { ProcessNode } from "./ProcessNode";
+import { AgentNode } from "./AgentNode"; 
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -16,7 +19,6 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
-import { ProcessNode } from "./ProcessNode";
 import { Sidebar } from "./Sidebar";
 import { PropertiesPanel } from "./PropertiesPanel";
 import { ProcessSettingsPanel } from "./ProcessSettingsPanel";
@@ -48,7 +50,11 @@ function DesignerInner() {
   const [showImport, setShowImport] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
 
-  const nodeTypes = useMemo(() => ({ process: ProcessNode }), []);
+// Register all custom node types used in the canvas
+  const nodeTypes = useMemo(() => ({ 
+    process: ProcessNode, 
+    agent: AgentNode // <-- We register our new AI Agent node here
+  }), []);
 
   const onConnect = useCallback(
     (c: Connection) =>
@@ -72,10 +78,13 @@ function DesignerInner() {
       const type = e.dataTransfer.getData("application/reactflow");
       if (!type || !rfInstance) return;
       const position = rfInstance.screenToFlowPosition({ x: e.clientX, y: e.clientY });
+
       const data: ProcessNodeData = { name: `step_${idCounter + 1}` };
+
+  // We dynamically set the type based on what the user dragged
       const newNode: Node = {
         id: nextId(),
-        type: "process",
+        type: type, // <-- Now it uses the type from the drag event
         position,
         data: data as unknown as Record<string, unknown>,
       };
