@@ -143,6 +143,43 @@
   --sidebar-ring: oklch(0.551 0.027 264.364);
 }
 
+/* ReactFlow Controls – dark theme override */
+/* ReactFlow MiniMap – above footer */
+.react-flow__minimap {
+  bottom: 36px !important;
+  z-index: 20 !important;
+}
+
+.react-flow__controls {
+  background: oklch(0.20 0.02 260) !important;
+  border: 1px solid oklch(0.38 0.03 260) !important;
+  border-radius: 6px !important;
+  overflow: hidden;
+  box-shadow: 0 2px 8px oklch(0 0 0 / 0.5) !important;
+  bottom: 36px !important;
+  z-index: 20 !important;
+}
+
+.react-flow__controls-button {
+  background: oklch(0.20 0.02 260) !important;
+  border-bottom: 1px solid oklch(0.38 0.03 260) !important;
+  color: oklch(0.85 0.02 260) !important;
+  fill: oklch(0.85 0.02 260) !important;
+}
+
+.react-flow__controls-button:last-child {
+  border-bottom: none !important;
+}
+
+.react-flow__controls-button:hover {
+  background: oklch(0.32 0.04 260) !important;
+}
+
+.react-flow__controls-button svg {
+  fill: oklch(0.85 0.02 260) !important;
+  stroke: oklch(0.85 0.02 260) !important;
+}
+
 @layer base {
   * {
     border-color: var(--color-border);
