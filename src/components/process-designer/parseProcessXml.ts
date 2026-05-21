@@ -21,9 +21,44 @@ const edgeStyle = { stroke: "var(--color-border)", strokeWidth: 2 };
  * Steps become a linear chain in the order they appear in the XML.
  * Also extracts variables, outputs, agents, and process-level attributes.
  */
+const TEXT_TAGS = ["system", "prompt", "response_schema", "var"];
+
+function escapeContent(content: string): string {
+  if (content.includes("<![CDATA[")) return content;
+  return content
+    .replace(/&(?!(?:amp|lt|gt|quot|apos);)/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function sanitizeXml(xml: string): string {
+  let result = xml;
+  for (const tag of TEXT_TAGS) {
+    // Match <tag> OR <tag attr="..."> (handles optional attributes)
+    result = result.replace(
+      new RegExp(`(<${tag}(?:\\s[^>]*)?>)([\\s\\S]*?)(<\\/${tag}>)`, "g"),
+      (_, open, content: string, close) => open + escapeContent(content) + close,
+    );
+  }
+  return result;
+}
+
+// Fallback: escape any < that doesn't start a known process XML tag
+function sanitizeXmlAggressive(xml: string): string {
+  const knownTags = "process|steps|step|variables|var|containers|container|outputs|output|agents|agent|system|prompt|response_schema";
+  return xml.replace(
+    new RegExp(`<(?!\\/?(?:${knownTags})\\b)(?![?!\\/])`, "g"),
+    "&lt;",
+  );
+}
+
 export function parseProcessXml(xml: string): ParseResult {
   const parser = new DOMParser();
-  const doc = parser.parseFromString(xml, "application/xml");
+  let doc = parser.parseFromString(sanitizeXml(xml), "application/xml");
+
+  if (doc.querySelector("parsererror")) {
+    doc = parser.parseFromString(sanitizeXmlAggressive(xml), "application/xml");
+  }
 
   const parseError = doc.querySelector("parsererror");
   if (parseError) {

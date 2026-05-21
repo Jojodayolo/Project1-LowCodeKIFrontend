@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { createProvider, resolveConfig, type ChatMessage } from "@/lib/ai";
 import type { ProcessContext } from "./types";
 
@@ -10,8 +10,20 @@ interface DisplayMsg {
 
 const SYSTEM_PROMPT = `Du bist ein Assistent für einen visuellen KI-Prozessdesigner.
 Du hilfst dabei, KI-Workflows als XML zu modellieren.
-Wenn du einen Prozess vorschlägst oder änderst, gib den vollständigen XML-Block als \`\`\`xml ... \`\`\` Code-Block aus.
 Antworte immer auf Deutsch.
+
+## Antwortformat (strikt einhalten)
+Schreibe genau zwei Dinge – nichts anderes:
+
+1. Einen beschreibenden Text welcher beschreibt was umgesetzt wurde.
+2. Eine Auflistung der Schritte die in der XML stehen, einen pro Zeile, im exakten Format:
+- **schrittname**: Was dieser Schritt macht.
+
+Direkt danach, ohne weiteren Text, der XML-Block:
+
+\`\`\`xml
+...
+\`\`\`
 
 ## Variablen und Container automatisch ableiten
 Analysiere die Beschreibung des Nutzers und leite selbstständig ab:
@@ -23,7 +35,7 @@ Der Nutzer soll KEINE Variablen oder Container manuell nennen müssen – du erk
 ## XML-Format
 \`\`\`xml
 <?xml version="1.0" encoding="UTF-8"?>
-<process name="ProzessName" model="gpt-4o-mini" llmHost="https://api.openai.com/v1" type="analysis">
+<process name="ProzessName" type="analysis">
   <variables>
     <var name="question">Standardwert</var>
     <var name="context">Hintergrundinfo</var>
@@ -48,11 +60,61 @@ Der Nutzer soll KEINE Variablen oder Container manuell nennen müssen – du erk
 </process>
 \`\`\`
 
-## Regeln
+## Wichtig für gültiges XML
+- Schreibe in <system>, <prompt> und <response_schema> NIEMALS die Zeichen < oder > direkt. Nutze stattdessen &lt; und &gt; oder formuliere den Satz um.
+- Alle Attributwerte müssen in Anführungszeichen stehen: name="wert" nicht name=wert
+- Lasse die Attribute model und llmHost im <process>-Tag immer weg – diese werden aus der Konfiguration der Anwendung übernommen
 - Jeder <step> hat einen eindeutigen name, optional readFrom und writeTo (Container-Namen, leerzeichen-getrennt), optional loop="true" loopOver="containerName"
 - Verwende {{variablenname}} für Platzhalter in Prompts – diese werden zur Laufzeit aus <variables> befüllt
 - response_schema ist ein Python-Pydantic-Modell
 - Wähle aussagekräftige englische Namen für Steps, Variablen und Container (snake_case)`;
+
+function renderMarkdown(text: string) {
+  const lines = text.split("\n");
+  const result: React.ReactNode[] = [];
+  let listBuffer: string[] = [];
+
+  const flushList = () => {
+    if (listBuffer.length === 0) return;
+    result.push(
+      <ul key={result.length} className="my-1 space-y-0.5 pl-4 list-disc">
+        {listBuffer.map((item, i) => (
+          <li key={i}>{renderInline(item)}</li>
+        ))}
+      </ul>,
+    );
+    listBuffer = [];
+  };
+
+  const renderInline = (s: string): React.ReactNode[] => {
+    const parts = s.split(/(\*\*[^*]+\*\*)/g);
+    return parts.map((p, i) =>
+      p.startsWith("**") && p.endsWith("**")
+        ? <strong key={i}>{p.slice(2, -2)}</strong>
+        : p,
+    );
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const listMatch = /^[-*]\s+(.+)/.exec(line);
+    if (listMatch) {
+      listBuffer.push(listMatch[1]);
+    } else {
+      flushList();
+      if (line === "") {
+        result.push(<br key={result.length} />);
+      } else if (/^#{1,3}\s/.test(line)) {
+        const text = line.replace(/^#+\s/, "");
+        result.push(<span key={result.length} className="block font-semibold mt-1">{renderInline(text)}</span>);
+      } else {
+        result.push(<span key={result.length} className="block">{renderInline(line)}</span>);
+      }
+    }
+  }
+  flushList();
+  return result;
+}
 
 function extractXml(text: string): { displayText: string; xml: string | undefined } {
   // 1. Code block: ```xml ... ``` (case-insensitive lang tag)
@@ -84,11 +146,13 @@ async function fetchModels(baseUrl: string, apiKey: string): Promise<string[]> {
 export function ChatPanel({
   width,
   processContext,
+  currentXml,
   onApplyXml,
   onModelChange,
 }: {
   width: number;
   processContext: ProcessContext;
+  currentXml: string;
   onApplyXml: (xml: string) => void;
   onModelChange: (model: string) => void;
 }) {
@@ -134,6 +198,9 @@ export function ChatPanel({
       const provider = createProvider(config);
       const apiMessages: ChatMessage[] = [
         { role: "system", content: SYSTEM_PROMPT },
+        ...(currentXml.trim()
+          ? [{ role: "system" as const, content: `Aktueller Prozess im Designer:\n\`\`\`xml\n${currentXml}\n\`\`\`\n\nPasse diesen Prozess bei Änderungswünschen des Nutzers gezielt an und gib immer den vollständigen aktualisierten XML-Block aus.` }]
+          : []),
         ...historyRef.current,
       ];
       const response = await provider.chat(apiMessages);
@@ -188,13 +255,13 @@ export function ChatPanel({
         {messages.map((m, i) => (
           <div key={i} className={m.role === "user" ? "flex justify-end" : "flex justify-start"}>
             <div
-              className={`max-w-[90%] whitespace-pre-wrap rounded-lg px-3 py-2 text-sm ${
+              className={`max-w-[90%] rounded-lg px-3 py-2 text-sm ${
                 m.role === "user"
-                  ? "bg-primary/15 text-foreground"
+                  ? "bg-primary/15 text-foreground whitespace-pre-wrap"
                   : "bg-accent text-accent-foreground"
               }`}
             >
-              {m.text}
+              {m.role === "user" ? m.text : renderMarkdown(m.text)}
               {m.xml && (
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   <button
@@ -236,7 +303,7 @@ export function ChatPanel({
                 send();
               }
             }}
-            placeholder="Beschreibe deinen Prozess… (Shift+Enter für Zeilenumbruch)"
+            placeholder="Beschreibe deinen Prozess… "
             disabled={loading}
             rows={1}
             className="flex-1 rounded-md border border-border bg-input px-3 py-1.5 text-sm outline-none focus:border-primary/60 disabled:opacity-50"

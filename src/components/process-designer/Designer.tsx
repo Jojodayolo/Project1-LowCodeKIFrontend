@@ -375,6 +375,7 @@ function DesignerInner() {
         <ChatPanel
           width={chatWidth}
           processContext={processCtx}
+          currentXml={xmlPreview}
           onApplyXml={(xml) => handleImport(parseProcessXml(xml))}
           onModelChange={(model) => setProcessCtx((c) => ({ ...c, meta: { ...c.meta, model } }))}
         />
