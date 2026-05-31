@@ -27,6 +27,7 @@ import { ImportXmlDialog } from "./ImportXmlDialog";
 import { TEMPLATES } from "./templates";
 import type { ProcessNodeData, ProcessContext } from "./types";
 import type { ParseResult } from "./parseProcessXml";
+import { isValidXml } from "./validateXml";
 
 let idCounter = 100;
 const nextId = () => `n${++idCounter}`;
@@ -49,6 +50,7 @@ function DesignerInner() {
   const [showXml, setShowXml] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [validationMessage, setValidationMessage] = useState<{text: string; isSuccess: boolean} | null>(null);
 
 // Register all custom node types used in the canvas
   const nodeTypes = useMemo(() => ({ 
@@ -255,6 +257,21 @@ function DesignerInner() {
     return !d.writeTo;
   }).length;
 
+  
+  const handleValidate = useCallback(() => {
+    const isValid = isValidXml(xmlPreview);
+
+    setValidationMessage({
+      text: isValid ? "Das XML ist gültig." : "Das XML ist ungültig. Bitte überprüfe die Struktur und Inhalte.",
+      isSuccess: isValid
+    });
+
+    // Fade out the message after 4 seconds
+    setTimeout(() => {
+      setValidationMessage(null);
+    }, 4000);
+  }, [xmlPreview]);
+
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-background text-foreground">
       {/* Top bar */}
@@ -279,7 +296,7 @@ function DesignerInner() {
           <ToolbarBtn onClick={() => setShowSettings(true)}>Einstellungen</ToolbarBtn>
           <ToolbarBtn onClick={() => setShowImport(true)}>XML Import</ToolbarBtn>
           <ToolbarBtn onClick={() => setShowXml((v) => !v)}>{showXml ? "XML schließen" : "XML Vorschau"}</ToolbarBtn>
-          <ToolbarBtn>Validieren</ToolbarBtn>
+          <ToolbarBtn onClick={() => handleValidate()}>Validieren</ToolbarBtn>
           <button className="rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:opacity-90 transition">
             ▶ Ausführen
           </button>
@@ -365,6 +382,24 @@ function DesignerInner() {
           onChange={setProcessCtx}
           onClose={() => setShowSettings(false)}
         />
+      )}
+
+      {validationMessage && (
+        <div className="fixed bottom-10 left-1/2 z-50 -translate-x-1/2 animate-in fade-in slide-in-from-bottom-4 duration-300">
+          <div className={`flex items-center gap-2 rounded-full border px-4 py-2 text-xs font-medium shadow-lg backdrop-blur-md ${
+            validationMessage.isSuccess 
+              ? "bg-emerald-500/15 border-emerald-500/30 text-emerald-500" 
+              : "bg-destructive/15 border-destructive/30 text-destructive"
+          }`}>
+            <span>{validationMessage.text}</span>
+            <button 
+              onClick={() => setValidationMessage(null)} 
+              className="ml-2 opacity-60 hover:opacity-100 font-bold"
+            >
+              ×
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );
