@@ -51,6 +51,7 @@ function DesignerInner() {
   const [showImport, setShowImport] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [validationMessage, setValidationMessage] = useState<{text: string; isSuccess: boolean} | null>(null);
+  const [showXmlDropdown, setShowXmlDropdown] = useState(false);
 
 // Register all custom node types used in the canvas
   const nodeTypes = useMemo(() => ({ 
@@ -257,7 +258,6 @@ function DesignerInner() {
     return !d.writeTo;
   }).length;
 
-  
   const handleValidate = useCallback(() => {
     const isValid = isValidXml(xmlPreview);
 
@@ -271,6 +271,29 @@ function DesignerInner() {
       setValidationMessage(null);
     }, 4000);
   }, [xmlPreview]);
+
+  const handleExportXml = useCallback(() => {
+    // Check XML validity before exporting
+    handleValidate();
+    if (!isValidXml(xmlPreview)) { return };
+
+    const blob = new Blob([xmlPreview], { type: "application/xml;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+  
+    // Filename based on process name, sanitized for filesystem use
+    const fileName = `${processCtx.meta.name.toLowerCase().replace(/[^a-z0-9]/g, "_") || "process"}.xml`;
+  
+    link.href = url;
+    link.setAttribute("download", fileName);
+    document.body.appendChild(link);
+    link.click();
+  
+    // Cleanup
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    setShowXmlDropdown(false);
+  }, [xmlPreview, processCtx.meta.name]);
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-background text-foreground">
@@ -294,9 +317,71 @@ function DesignerInner() {
             title="Process name (used in XML output)"
           />
           <ToolbarBtn onClick={() => setShowSettings(true)}>Einstellungen</ToolbarBtn>
-          <ToolbarBtn onClick={() => setShowImport(true)}>XML Import</ToolbarBtn>
-          <ToolbarBtn onClick={() => setShowXml((v) => !v)}>{showXml ? "XML schließen" : "XML Vorschau"}</ToolbarBtn>
-          <ToolbarBtn onClick={() => handleValidate()}>Validieren</ToolbarBtn>
+
+          {/* Alte Aktions-Buttons: XML Import, Vorschau, Validierung, Export (Falls Dropdwon Müll ist)*/}
+          {/*<ToolbarBtn onClick={() => setShowImport(true)}>XML Import</ToolbarBtn>*/}
+          {/*<ToolbarBtn onClick={() => setShowXml((v) => !v)}>{showXml ? "XML schließen" : "XML Vorschau"}</ToolbarBtn>*/}
+          {/*<ToolbarBtn onClick={() => handleValidate()}>Validieren</ToolbarBtn>*/}
+
+          <div className="relative">
+            <ToolbarBtn onClick={() => setShowXmlDropdown((v) => !v)}>
+              XML Aktionen <span className="ml-1 text-[10px]">▼</span>
+            </ToolbarBtn>
+
+            {showXmlDropdown && (
+              <>
+                {/* Invisible overlay to close the dropdown when clicking outside */}
+                <div className="fixed inset-0 z-30" onClick={() => setShowXmlDropdown(false)} />
+        
+                {/* Dropdown-Contents */}
+                <div className="absolute right-0 mt-1 w-44 rounded-md border border-border bg-popover p-1 shadow-lg z-40 text-xs">
+                  <button
+                    onClick={() => {
+                      setShowXml((v) => !v);
+                      setShowXmlDropdown(false);
+                    }}
+                    className="flex w-full items-center rounded px-2 py-1.5 text-left text-foreground hover:bg-accent transition"
+                  >
+                   {showXml ? "XML Vorschau schließen" : "XML Vorschau öffnen"}
+                  </button>
+
+                  <div className="my-1 border-t border-border" /> {/* Divider */}
+
+                  <button
+                    onClick={() => {
+                      handleValidate();
+                      setShowXmlDropdown(false);
+                    }}
+                    className="flex w-full items-center rounded px-2 py-1.5 text-left text-foreground hover:bg-accent transition"
+                  >
+                    XML Validieren
+                  </button>
+
+                  <div className="my-1 border-t border-border" /> {/* Divider */}
+                  
+                  <button
+                    onClick={() => {
+                      setShowImport(true);
+                      setShowXmlDropdown(false);
+                    }}
+                    className="flex w-full items-center rounded px-2 py-1.5 text-left text-foreground hover:bg-accent transition"
+                  >
+                    XML Importieren
+                  </button>
+
+                  <div className="my-1 border-t border-border" /> {/* Divider */}
+          
+                  <button
+                    onClick={() => handleExportXml()}
+                    className="flex w-full items-center rounded px-2 py-1.5 text-left text-foreground hover:bg-accent transition font-medium"
+                  >
+                   XML Exportieren (.xml)
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+
           <button className="rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:opacity-90 transition">
             ▶ Ausführen
           </button>
