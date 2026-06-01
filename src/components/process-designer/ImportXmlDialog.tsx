@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { parseProcessXml, type ParseResult } from "./parseProcessXml";
+import { isValidXml } from "./validateXml";
 
 interface Props {
   onImport: (result: ParseResult) => void;
@@ -23,11 +24,11 @@ export function ImportXmlDialog({ onImport, onClose }: Props) {
   };
 
   const handleImport = () => {
-    try {
+    if (isValidXml(xml)) {
       const result = parseProcessXml(xml);
       onImport(result);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unbekannter Fehler beim Parsen.");
+    } else {
+      setError("Ungültiges XML-Format. Bitte überprüfen Sie Ihre Eingabe.");
     }
   };
 
