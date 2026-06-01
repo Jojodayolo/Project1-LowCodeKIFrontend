@@ -314,6 +314,12 @@ export function ChatPanel({
         };
         const judgeProvider = createProvider(judgeConfig);
 
+        // Collect all user messages so the judge sees the full accumulated requirements
+        const fullRequirements = historyRef.current
+          .filter((m) => m.role === "user")
+          .map((m, i) => `[Nachricht ${i + 1}]: ${m.content}`)
+          .join("\n\n");
+
         let currentXmlStr = xmlString;
         let bestXmlStr = xmlString;
         let bestScore = -1;
@@ -330,7 +336,7 @@ export function ChatPanel({
             judgeResponse = await judgeProvider.chat(
               [
                 { role: "system", content: JUDGE_SYSTEM_PROMPT },
-                { role: "user", content: `Nutzerbeschreibung:\n${text}\n\nGenerierte XML:\n\`\`\`xml\n${currentXmlStr}\n\`\`\`` },
+                { role: "user", content: `Nutzerbeschreibungen (alle Nachrichten der Konversation):\n${fullRequirements}\n\nGenerierte XML:\n\`\`\`xml\n${currentXmlStr}\n\`\`\`` },
               ],
               ac.signal,
             );
