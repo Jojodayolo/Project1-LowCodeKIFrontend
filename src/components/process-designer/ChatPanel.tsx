@@ -77,17 +77,48 @@ Der Nutzer soll KEINE Variablen oder Container manuell nennen müssen – du erk
 - response_schema ist ein Python-Pydantic-Modell
 - Wähle aussagekräftige englische Namen für Steps, Variablen und Container (snake_case)`;
 
-const JUDGE_SYSTEM_PROMPT = `Du bist ein LLM-Judge für KI-Prozessdefinitionen im XML-Format.
-Deine Aufgabe: Bewerte wie gut eine generierte XML-Prozessdefinition die Anforderungen des Nutzers erfüllt.
+const JUDGE_SYSTEM_PROMPT = `Du bist ein strenger LLM-Judge für KI-Prozessdefinitionen im XML-Format.
+Deine Aufgabe: Bewerte präzise und kritisch wie gut eine generierte XML-Prozessdefinition die Anforderungen des Nutzers erfüllt.
+Sei bewusst streng – ein Score über 85 ist nur für nahezu perfekte Definitionen gerechtfertigt.
 
-Bewertungskriterien:
-- Vollständigkeit: Sind alle genannten Anforderungen und Prozessschritte vorhanden?
-- Korrektheit: Ist die XML-Struktur valide und konform zum vorgegebenen Format?
-- Sinnhaftigkeit: Ist der Prozessfluss logisch und werden Variablen/Container korrekt eingesetzt?
+Bewertungskriterien (jeweils 0-25 Punkte, zusammen 0-100):
+
+1. Strukturelle Vollständigkeit
+   - Sind alle Pflicht-Elemente vorhanden: <process>, <variables>, <containers>, <outputs>, <steps>?
+   - Hat jeder <step> einen eindeutigen name, ein <system>- und ein <prompt>-Tag?
+   - Hat jeder <step> der Daten produziert ein writeTo-Attribut? Hat jeder der Daten liest ein readFrom?
+   - Sind alle referenzierten Container auch in <containers> deklariert?
+   - Abzug: Fehlende Pflicht-Elemente, undefinierte Container, fehlende writeTo/readFrom → bis zu -25
+
+2. Vollständigkeit der Anforderungen
+   - Sind ALLE vom Nutzer genannten Anforderungen als Steps modelliert?
+   - Sind alle notwendigen Variablen (<var>) und Zwischenspeicher (<container>) vorhanden?
+   - Sind Outputs definiert?
+   - Abzug: Fehlende Steps, fehlende Variablen, fehlende Container → bis zu -25
+
+3. Datenfluss & Logik
+   - Werden readFrom/writeTo bei jedem Step korrekt eingesetzt?
+   - Referenzieren Prompts nur Container/Variablen die vorher befüllt wurden?
+   - Sind loopOver-Steps sinnvoll auf existierende Container bezogen?
+   - Abzug: Broken references, fehlende readFrom/writeTo, inkonsistenter Fluss → bis zu -25
+
+4. Qualität der Prompts & Schemata
+   - Sind system- und user-Prompts präzise und auf den jeweiligen Step zugeschnitten?
+   - Sind response_schema-Felder vollständig und korrekt als Pydantic-Modell definiert?
+   - Werden {{variablen}} korrekt eingesetzt?
+   - Abzug: Generische Prompts, fehlende Schemata, falsche Platzhalter → bis zu -25
 
 Antworte EXAKT in diesem Format – kein weiterer Text davor oder danach:
 SCORE: [Ganzzahl 0-100]
-FEEDBACK: [Konkrete Verbesserungsvorschläge auf Deutsch für das generierende LLM]`;
+FEEDBACK:
+MÄNGEL:
+- [Schwerwiegendster Mangel mit betroffener Stelle, z.B. "Step 'analyze': writeTo fehlt"]
+- [Nächster Mangel]
+- [...]
+ÄNDERUNGEN:
+- [Konkrete Anweisung was geändert werden muss, z.B. "Füge writeTo='results' zu Step 'analyze' hinzu"]
+- [Konkrete Anweisung]
+- [...]`;
 
 function parseJudgeResponse(text: string): { score: number; feedback: string } {
   const scoreMatch = /SCORE:\s*(\d+(?:\.\d+)?)/i.exec(text);
@@ -145,14 +176,18 @@ function renderMarkdown(text: string) {
   return result;
 }
 
+const XML_PATTERN = /((?:<\?xml[\s\S]*?)?<process[\s\S]*?<\/process>)/i;
+
 function extractXml(text: string): { displayText: string; xml: string | undefined } {
   const codeBlock = /```xml\s*([\s\S]+?)```/i.exec(text);
   if (codeBlock) {
-    const xml = codeBlock[1].trim();
+    // LLMs sometimes write prose before the actual XML inside the code block
+    const inner = XML_PATTERN.exec(codeBlock[1]);
+    const xml = inner ? inner[1].trim() : undefined;
     const displayText = text.replace(codeBlock[0], "").trim() || "Ich habe eine XML-Prozessdefinition erzeugt:";
     return { displayText, xml };
   }
-  const rawXml = /((?:<\?xml[\s\S]*?)?<process[\s\S]*?<\/process>)/i.exec(text);
+  const rawXml = XML_PATTERN.exec(text);
   if (rawXml) {
     const xml = rawXml[1].trim();
     const displayText = text.replace(rawXml[0], "").trim() || "Ich habe eine XML-Prozessdefinition erzeugt:";
@@ -339,7 +374,7 @@ export function ChatPanel({
                 { role: "assistant", content: `\`\`\`xml\n${currentXmlStr}\n\`\`\`` },
                 {
                   role: "user",
-                  content: `Folgende Anforderungen wurden noch nicht vollständig umgesetzt – passe die XML direkt an:\n\n${feedback}\n\nSetze jeden Punkt ohne Erklärung oder Begründung direkt in der XML um.`,
+                  content: `Die bisherige XML hat folgende Mängel die behoben werden müssen:\n\n${feedback}\n\nErstelle eine vollständig überarbeitete XML die ALLE genannten Änderungen umsetzt. Wichtig: Achte auf korrekte XML-Syntax – jeder öffnende Tag (<step>, <system>, <prompt> usw.) muss exakt einen passenden schließenden Tag haben. Gib die komplette XML aus – keine partiellen Edits, keine Erklärungen, nur die fertige XML.`,
                 },
               ],
               ac.signal,
