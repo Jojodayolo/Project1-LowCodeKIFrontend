@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from "react";
+import { useCatalog } from "@/lib/useCatalog";
 // Import the custom nodes
 import { ProcessNode } from "./ProcessNode";
 import { AgentNode } from "./AgentNode"; 
@@ -26,6 +27,7 @@ import { ChatPanel } from "./ChatPanel";
 import { ImportXmlDialog } from "./ImportXmlDialog";
 import { TEMPLATES } from "./templates";
 import type { ProcessNodeData, ProcessContext } from "./types";
+import { parseProcessXml } from "./parseProcessXml";
 import type { ParseResult } from "./parseProcessXml";
 import { isValidXml } from "./validateXml";
 
@@ -50,6 +52,26 @@ function DesignerInner() {
   const [showXml, setShowXml] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(288);
+  const [chatWidth, setChatWidth] = useState(384);
+  const { entries: catalog, save: saveToCatalog, remove: deleteFromCatalog } = useCatalog();
+
+  const startResize = (e: React.MouseEvent, panel: "sidebar" | "chat") => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = panel === "sidebar" ? sidebarWidth : chatWidth;
+    const onMove = (ev: MouseEvent) => {
+      const delta = panel === "sidebar" ? ev.clientX - startX : startX - ev.clientX;
+      const next = Math.max(180, Math.min(560, startWidth + delta));
+      panel === "sidebar" ? setSidebarWidth(next) : setChatWidth(next);
+    };
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  };
   const [validationMessage, setValidationMessage] = useState<{text: string; isSuccess: boolean} | null>(null);
   const [showXmlDropdown, setShowXmlDropdown] = useState(false);
 
@@ -249,14 +271,6 @@ function DesignerInner() {
     return lines.join("\n");
   }, [orderedNodes, processCtx]);
 
-  const errors = nodes.filter((n) => {
-    const d = n.data as unknown as ProcessNodeData;
-    return !d.name;
-  }).length;
-  const warnings = nodes.filter((n) => {
-    const d = n.data as unknown as ProcessNodeData;
-    return !d.writeTo;
-  }).length;
 
   const handleValidate = useCallback(() => {
     const isValid = isValidXml(xmlPreview);
@@ -298,9 +312,10 @@ function DesignerInner() {
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-background text-foreground">
       {/* Top bar */}
-      <header className="flex items-center justify-between border-b border-border bg-sidebar px-4 py-2.5">
-        <div className="flex items-center gap-3">
-          <div className="flex h-7 w-7 items-center justify-center rounded-md bg-primary/15">
+      <header className="flex items-center border-b border-border bg-sidebar px-4 py-2.5 gap-2">
+        {/* Left: logo */}
+        <div className="flex flex-1 items-center gap-3">
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-primary/15">
             <div className="h-3 w-3 rounded-sm bg-primary" />
           </div>
           <div>
@@ -308,14 +323,26 @@ function DesignerInner() {
             <p className="text-[11px] text-muted-foreground leading-tight">NoCode-Frontend für KI-gestützte Prozesse</p>
           </div>
         </div>
+
+        {/* Center: process name + save */}
         <div className="flex items-center gap-1.5">
           <input
             value={processCtx.meta.name}
             onChange={(e) => setProcessCtx((c) => ({ ...c, meta: { ...c.meta, name: e.target.value } }))}
-            className="rounded-md border border-border bg-input px-2.5 py-1.5 text-xs font-medium text-foreground outline-none focus:border-primary/60 w-32"
-            placeholder="Process name"
-            title="Process name (used in XML output)"
+            className="rounded-md border border-border bg-input px-3 py-1.5 text-sm font-medium text-foreground outline-none focus:border-primary/60 w-80 text-center"
+            placeholder="Prozessname"
+            title="Prozessname (wird im XML verwendet)"
           />
+          <button
+            onClick={() => saveToCatalog(processCtx.meta.name || "Unbenannt", xmlPreview)}
+            className="rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:opacity-90 transition"
+          >
+            Speichern
+          </button>
+        </div>
+
+        {/* Right: toolbar buttons */}
+        <div className="flex flex-1 items-center justify-end gap-1.5">
           <ToolbarBtn onClick={() => setShowSettings(true)}>Einstellungen</ToolbarBtn>
 
           {/* Alte Aktions-Buttons: XML Import, Vorschau, Validierung, Export (Falls Dropdwon Müll ist)*/}
@@ -390,7 +417,17 @@ function DesignerInner() {
 
       {/* Main */}
       <div className="flex flex-1 overflow-hidden">
-        <Sidebar onLoadTemplate={loadTemplate} />
+        <Sidebar
+          width={sidebarWidth}
+          onLoadTemplate={loadTemplate}
+          catalog={catalog}
+          onLoadCatalog={(xml) => handleImport(parseProcessXml(xml))}
+          onDeleteCatalog={deleteFromCatalog}
+        />
+        <div
+          className="w-1 cursor-col-resize shrink-0 hover:bg-primary/40 active:bg-primary/60 transition-colors"
+          onMouseDown={(e) => startResize(e, "sidebar")}
+        />
 
         <div className="relative flex-1" ref={wrapperRef} style={{ background: "var(--canvas)" }}>
           <ReactFlow
@@ -409,7 +446,7 @@ function DesignerInner() {
             proOptions={{ hideAttribution: true }}
           >
             <Background variant={BackgroundVariant.Dots} gap={18} size={1.2} color="oklch(0.30 0.02 260)" />
-            <Controls className="!bg-card !border !border-border !rounded-md overflow-hidden" />
+            <Controls />
             <MiniMap
               pannable
               zoomable
@@ -430,20 +467,24 @@ function DesignerInner() {
           )}
 
           {/* Footer */}
-          <div className="absolute bottom-0 left-0 right-0 z-10 flex items-center justify-between border-t border-border bg-sidebar/90 px-4 py-1.5 text-[11px] backdrop-blur">
-            <div className="flex items-center gap-4 text-muted-foreground">
-              <span className={errors > 0 ? "text-destructive" : ""}>● Fehler: {errors}</span>
-              <span className={warnings > 0 ? "text-[color:var(--node-loop)]" : ""}>● Warnungen: {warnings}</span>
-              <span>Knoten: {nodes.length}</span>
-              <span>Kanten: {edges.length}</span>
-            </div>
-            <div className="text-muted-foreground">
-              Klicke einen Knoten doppelt für Eigenschaften · XML als Source of Truth
-            </div>
+          <div className="absolute bottom-0 left-0 right-0 z-10 flex items-center justify-end border-t border-border bg-sidebar/90 px-4 py-1.5 text-[11px] text-muted-foreground backdrop-blur gap-4">
+            <span>Knoten: {nodes.length}</span>
+            <span>Kanten: {edges.length}</span>
           </div>
+
         </div>
 
-        <ChatPanel onApplyTemplate={() => loadTemplate("qoc")} />
+        <div
+          className="w-1 cursor-col-resize shrink-0 hover:bg-primary/40 active:bg-primary/60 transition-colors"
+          onMouseDown={(e) => startResize(e, "chat")}
+        />
+        <ChatPanel
+          width={chatWidth}
+          processContext={processCtx}
+          currentXml={xmlPreview}
+          onApplyXml={(xml) => handleImport(parseProcessXml(xml))}
+          onModelChange={(model) => setProcessCtx((c) => ({ ...c, meta: { ...c.meta, model } }))}
+        />
 
         <PropertiesPanel
           node={selectedNode}

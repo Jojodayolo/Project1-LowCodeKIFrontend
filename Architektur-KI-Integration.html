@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <title>Architektur – KI-Integration AI Process Designer</title>
+  <style>
+    body { font-family: Calibri, Arial, sans-serif; font-size: 11pt; line-height: 1.5; margin: 2.5cm 3cm; color: #1a1a1a; }
+    h1 { font-size: 20pt; color: #1f4e79; border-bottom: 2px solid #1f4e79; padding-bottom: 6px; margin-top: 0; }
+    h2 { font-size: 14pt; color: #2e75b6; margin-top: 24pt; border-bottom: 1px solid #c5d9f1; padding-bottom: 4px; }
+    h3 { font-size: 11pt; color: #1f4e79; margin-top: 14pt; }
+    code, pre { font-family: Consolas, "Courier New", monospace; font-size: 9.5pt; background: #f4f4f4; border: 1px solid #ddd; border-radius: 3px; }
+    code { padding: 1px 4px; }
+    pre { padding: 10px 14px; line-height: 1.4; overflow-x: auto; }
+    table { border-collapse: collapse; width: 100%; margin: 10pt 0; font-size: 10pt; }
+    th { background: #2e75b6; color: white; padding: 6px 10px; text-align: left; }
+    td { padding: 5px 10px; border: 1px solid #c5d9f1; }
+    tr:nth-child(even) td { background: #f0f7ff; }
+    ul, ol { margin: 6pt 0; padding-left: 20pt; }
+    li { margin-bottom: 3pt; }
+    .subtitle { color: #555; font-size: 10pt; margin-bottom: 20pt; }
+    .box { background: #f0f7ff; border-left: 4px solid #2e75b6; padding: 8px 12px; margin: 10pt 0; }
+    .diagram { font-family: Consolas, monospace; font-size: 9pt; background: #fafafa; border: 1px solid #ddd; padding: 12px; line-height: 1.6; }
+    .pagebreak { page-break-before: always; }
+  </style>
+</head>
+<body>
+
+<h1>Architektur – KI-Integration</h1>
+<p class="subtitle">Projekt: AI Process Designer &nbsp;|&nbsp; Hochschule Ruhr West – Master Informatik &nbsp;|&nbsp; Stand: Mai 2026</p>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<h2>1. Überblick</h2>
+
+<p>Der <strong>AI Process Designer</strong> ist ein Low-Code-Frontend zur visuellen Modellierung von KI-gestützten Entscheidungs- und Analyseprozessen. Die KI-Integration besteht aus zwei Teilen:</p>
+
+<ol>
+  <li><strong>KI-Assistent (ChatPanel)</strong> – ein konversationeller Assistent, der natürlichsprachliche Beschreibungen in ausführbare XML-Prozessdefinitionen übersetzt.</li>
+  <li><strong>Provider-Abstraktion</strong> – eine austauschbare Schicht, die es erlaubt das zugrundeliegende Sprachmodell (LLM) ohne Codeänderungen zu wechseln.</li>
+</ol>
+
+<div class="box">
+  <strong>Kernprinzip:</strong> Das System ist modellunabhängig. Jeder LLM-Anbieter der die OpenAI-Chat-Completions-API implementiert – darunter OpenAI, Azure OpenAI und lokale Modelle über Ollama – kann ohne Änderung an der Kernlogik verwendet werden.
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<h2>2. Architekturdiagramm</h2>
+
+<pre class="diagram">
+┌─────────────────────────────────────────────────────────────────┐
+│                        Browser / Frontend                        │
+│                                                                  │
+│  ┌──────────────┐    ┌──────────────────────────────────────┐   │
+│  │   Designer   │    │            ChatPanel                 │   │
+│  │  (Canvas +   │◄───│  - Nutzereingabe (Textarea)          │   │
+│  │   Sidebar)   │    │  - Gesprächsverlauf (historyRef)     │   │
+│  │              │    │  - Modell-Dropdown (fetchModels)     │   │
+│  │  parseXml()  │◄───│  - extractXml() → Als Graph         │   │
+│  └──────────────┘    └──────────────┬───────────────────────┘   │
+│                                     │                            │
+│                      ┌──────────────▼───────────────────────┐   │
+│                      │         src/lib/ai/index.ts           │   │
+│                      │                                       │   │
+│                      │  resolveConfig(ProcessMeta)           │   │
+│                      │  ┌────────────────────────────────┐  │   │
+│                      │  │  Priorität der Konfiguration:  │  │   │
+│                      │  │  1. meta.model / meta.llmHost  │  │   │
+│                      │  │     (pro Prozess konfiguriert) │  │   │
+│                      │  │  2. VITE_AI_MODEL / VITE_AI_   │  │   │
+│                      │  │     BASE_URL (.env.local)      │  │   │
+│                      │  │  3. Standardwert (OpenAI)      │  │   │
+│                      │  └────────────────────────────────┘  │   │
+│                      │                                       │   │
+│                      │  createProvider(AIConfig)             │   │
+│                      └──────────────┬────────────────────────┘   │
+│                                     │                            │
+│                      ┌──────────────▼────────────────────────┐  │
+│                      │     OpenAICompatProvider               │  │
+│                      │   (src/lib/ai/providers/               │  │
+│                      │    openai-compat.ts)                   │  │
+│                      │                                        │  │
+│                      │   POST {baseUrl}/chat/completions      │  │
+│                      └──────────────┬─────────────────────────┘  │
+└─────────────────────────────────────┼───────────────────────────┘
+                                      │ HTTP / fetch()
+              ┌───────────────────────┼──────────────────┐
+              │                       │                  │
+     ┌────────▼────────┐   ┌──────────▼──────┐  ┌───────▼────────┐
+     │   OpenAI API    │   │  Ollama (lokal) │  │  Andere OpenAI │
+     │ api.openai.com  │   │ localhost:11434  │  │  kompatible    │
+     │    /v1/...      │   │    /v1/...      │  │  Anbieter      │
+     └─────────────────┘   └─────────────────┘  └────────────────┘
+</pre>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<h2 class="pagebreak">3. Schichtenmodell der KI-Integration</h2>
+
+<h3>3.1 Schicht 1 – Typen und Interfaces (<code>src/lib/ai/types.ts</code>)</h3>
+
+<p>Definiert die Verträge zwischen den Komponenten:</p>
+
+<table>
+  <tr><th>Interface / Typ</th><th>Beschreibung</th></tr>
+  <tr><td><code>AIProvider</code></td><td>Vertrag für alle LLM-Provider: eine einzige Methode <code>chat(messages[])</code></td></tr>
+  <tr><td><code>AIConfig</code></td><td>Laufzeit-Konfiguration: <code>baseUrl</code>, <code>apiKey</code>, <code>model</code></td></tr>
+  <tr><td><code>ChatMessage</code></td><td>Einzelne Nachricht im Gesprächsverlauf: <code>role</code> + <code>content</code></td></tr>
+</table>
+
+<pre>
+interface AIProvider {
+  chat(messages: ChatMessage[]): Promise&lt;string&gt;;
+}
+
+interface AIConfig {
+  baseUrl: string;   // z.B. https://api.openai.com/v1
+  apiKey:  string;
+  model:   string;
+}
+
+interface ChatMessage {
+  role: "user" | "assistant" | "system";
+  content: string;
+}
+</pre>
+
+<h3>3.2 Schicht 2 – Provider-Implementierung (<code>src/lib/ai/providers/openai-compat.ts</code>)</h3>
+
+<p>Die Klasse <code>OpenAICompatProvider</code> implementiert <code>AIProvider</code> und spricht jeden Endpunkt an, der das OpenAI Chat-Completions-Format unterstützt:</p>
+
+<ul>
+  <li>Verwendet natives <code>fetch()</code> – kein zusätzliches SDK-Paket nötig</li>
+  <li>Sendet <code>POST {baseUrl}/chat/completions</code> mit <code>Authorization: Bearer {apiKey}</code></li>
+  <li>Liefert sprechende Fehlermeldungen bei <code>401 Unauthorized</code>, <code>404 Not Found</code> und Verbindungsfehlern</li>
+  <li>Funktioniert unverändert für <strong>OpenAI</strong>, <strong>Ollama</strong> und jede weitere OpenAI-kompatible API</li>
+</ul>
+
+<h3>3.3 Schicht 3 – Factory und Konfigurationsauflösung (<code>src/lib/ai/index.ts</code>)</h3>
+
+<p>Zwei exportierte Funktionen verbinden Konfiguration und Provider:</p>
+
+<table>
+  <tr><th>Funktion</th><th>Aufgabe</th></tr>
+  <tr><td><code>resolveConfig(meta?)</code></td><td>Ermittelt die aktive Konfiguration nach Priorität (siehe Abschnitt 4)</td></tr>
+  <tr><td><code>createProvider(config)</code></td><td>Factory-Funktion – gibt die passende Provider-Instanz zurück</td></tr>
+</table>
+
+<div class="box">
+  <strong>Erweiterbarkeit:</strong> Um einen neuen Provider (z.B. Anthropic Claude, Google Gemini) hinzuzufügen, genügt es eine neue Klasse zu erstellen die <code>AIProvider</code> implementiert, und <code>createProvider()</code> um einen neuen Zweig zu erweitern. Alle übergeordneten Schichten bleiben unverändert.
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<h2 class="pagebreak">4. Konfigurationssystem</h2>
+
+<p>Die Konfiguration des LLM-Providers folgt einer dreistufigen Priorität:</p>
+
+<table>
+  <tr><th>Priorität</th><th>Quelle</th><th>Anwendungsfall</th></tr>
+  <tr><td>1 (höchste)</td><td><code>ProcessMeta.llmHost</code> / <code>ProcessMeta.model</code></td><td>Prozess-spezifisches Modell – im ProcessSettingsPanel konfiguriert, wird im XML gespeichert</td></tr>
+  <tr><td>2</td><td><code>VITE_AI_BASE_URL</code> / <code>VITE_AI_MODEL</code> / <code>VITE_AI_API_KEY</code></td><td>Anwendungsweiter Standard in <code>.env.local</code></td></tr>
+  <tr><td>3 (Fallback)</td><td>Hartkodierte Standardwerte</td><td><code>https://api.openai.com/v1</code>, Modell <code>gpt-4o-mini</code></td></tr>
+</table>
+
+<h3>Umgebungsvariablen (<code>.env.local</code>)</h3>
+
+<pre>
+# Ollama (lokal)
+VITE_AI_BASE_URL=http://localhost:11434/v1
+VITE_AI_API_KEY=ollama
+VITE_AI_MODEL=qwen2.5:7b
+
+# OpenAI
+# VITE_AI_BASE_URL=https://api.openai.com/v1
+# VITE_AI_API_KEY=sk-...
+# VITE_AI_MODEL=gpt-4o-mini
+</pre>
+
+<p><strong>Sicherheitshinweis:</strong> Die Datei <code>.env.local</code> ist in <code>.gitignore</code> aufgenommen (<code>*.local</code>) und wird nicht in das Repository eingecheckt. Die Datei <code>.env.example</code> dient als Vorlage ohne sensitive Werte.</p>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<h2>5. KI-Assistent (ChatPanel)</h2>
+
+<h3>5.1 Funktionsweise</h3>
+
+<p>Das ChatPanel (<code>src/components/process-designer/ChatPanel.tsx</code>) ist die Benutzeroberfläche des KI-Assistenten und übernimmt folgende Aufgaben:</p>
+
+<ol>
+  <li><strong>Gesprächsverwaltung:</strong> Der vollständige Gesprächsverlauf wird in einem <code>useRef</code> als <code>ChatMessage[]</code> gehalten und bei jedem API-Aufruf als Kontext mitgesendet – das Modell „erinnert" sich an frühere Nachrichten.</li>
+  <li><strong>System-Prompt:</strong> Beim ersten Aufruf wird ein fester System-Prompt mitgesendet, der das Modell auf die Rolle als XML-Prozess-Generator einstellt, das XML-Format erklärt und anweist, Variablen und Container selbstständig aus der Nutzerbeschreibung abzuleiten.</li>
+  <li><strong>XML-Extraktion:</strong> Die Funktion <code>extractXml()</code> erkennt XML im LLM-Output in zwei Formaten:
+    <ul>
+      <li>Als Markdown-Codeblock: <code>```xml ... ```</code></li>
+      <li>Als rohes XML direkt im Text: <code>&lt;process&gt;...&lt;/process&gt;</code></li>
+    </ul>
+    Das erkannte XML wird aus dem Anzeigetext entfernt und separat gespeichert.
+  </li>
+  <li><strong>Import in den Designer:</strong> Der Button „Als Graph übernehmen" übergibt das extrahierte XML an <code>parseProcessXml()</code>, welches daraus ReactFlow-Nodes und -Edges erzeugt. Fehler beim Parsen werden als Chat-Nachricht angezeigt.</li>
+  <li><strong>Modell-Wechsel:</strong> Beim Start lädt das Panel die verfügbaren Modelle vom Provider-Endpunkt (<code>GET {baseUrl}/models</code>) und zeigt sie in einem Dropdown an. Die Auswahl aktualisiert <code>ProcessMeta.model</code>.</li>
+</ol>
+
+<h3>5.2 Datenfluss einer Konversationsrunde</h3>
+
+<pre class="diagram">
+Nutzer tippt Nachricht
+       │
+       ▼
+Eingabe → historyRef (ChatMessage[]) hinzufügen
+       │
+       ▼
+resolveConfig(processContext.meta)  ← ProcessMeta + .env.local
+       │
+       ▼
+createProvider(config)  →  OpenAICompatProvider
+       │
+       ▼
+provider.chat([system, ...history])
+       │
+       ▼
+LLM-Antwort (Text + optional XML)
+       │
+       ├─► extractXml(response)
+       │        ├─ displayText  →  im Chat anzeigen
+       │        └─ xml          →  "Als Graph übernehmen"-Button
+       │
+       └─► history += { role: "assistant", content: response }
+</pre>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<h2 class="pagebreak">6. Prozesskatalog</h2>
+
+<p>Der Prozesskatalog ermöglicht das Speichern und Wiederverwenden von Prozessdefinitionen:</p>
+
+<table>
+  <tr><th>Komponente</th><th>Datei</th><th>Aufgabe</th></tr>
+  <tr><td><code>CatalogEntry</code></td><td><code>types.ts</code></td><td>Datentyp: <code>id</code>, <code>name</code>, <code>xml</code>, <code>createdAt</code></td></tr>
+  <tr><td><code>useCatalog()</code></td><td><code>src/lib/useCatalog.ts</code></td><td>React-Hook: liest/schreibt Einträge in <code>localStorage</code> (Key: <code>process-catalog</code>)</td></tr>
+  <tr><td>Sidebar</td><td><code>Sidebar.tsx</code></td><td>Zeigt gespeicherte Prozesse an, ermöglicht Laden und Löschen</td></tr>
+  <tr><td>Speichern-Button</td><td><code>Designer.tsx</code></td><td>Speichert aktuellen Prozessname + XML in den Katalog (Upsert nach Name)</td></tr>
+</table>
+
+<p>Die Persistierung erfolgt ausschließlich im Browser-<code>localStorage</code>. Eine serverseitige Persistierung (Datenbank, REST-API) ist als zukünftige Erweiterung vorgesehen.</p>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<h2>7. Dateistruktur der KI-Integration</h2>
+
+<pre class="diagram">
+src/
+├── lib/
+│   ├── ai/
+│   │   ├── types.ts                  ← AIProvider, AIConfig, ChatMessage
+│   │   ├── index.ts                  ← resolveConfig(), createProvider()
+│   │   └── providers/
+│   │       └── openai-compat.ts      ← OpenAICompatProvider (fetch-basiert)
+│   └── useCatalog.ts                 ← React-Hook für localStorage-Katalog
+│
+└── components/
+    └── process-designer/
+        ├── ChatPanel.tsx             ← KI-Assistent UI + extractXml()
+        ├── Designer.tsx              ← Hauptkomponente, Panel-Resize, Katalog-Wiring
+        ├── Sidebar.tsx               ← Prozesskatalog + Vorlagen + Bausteine
+        ├── types.ts                  ← ProcessMeta, CatalogEntry, ...
+        └── parseProcessXml.ts        ← XML → ReactFlow Nodes/Edges
+
+.env.local                            ← API-Keys + Provider-Config (nicht in Git)
+.env.example                          ← Vorlage für Entwickler
+</pre>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<h2>8. Unterstützte LLM-Provider</h2>
+
+<table>
+  <tr><th>Provider</th><th>Base URL</th><th>API-Key</th><th>Empfohlenes Modell</th></tr>
+  <tr><td><strong>Ollama</strong> (lokal)</td><td><code>http://localhost:11434/v1</code></td><td><code>ollama</code> (Platzhalter)</td><td><code>qwen2.5:7b</code></td></tr>
+  <tr><td><strong>OpenAI</strong></td><td><code>https://api.openai.com/v1</code></td><td>OpenAI API-Key</td><td><code>gpt-4o-mini</code></td></tr>
+  <tr><td><strong>Azure OpenAI</strong></td><td>Azure Deployment URL</td><td>Azure API-Key</td><td>Deploymentabhängig</td></tr>
+  <tr><td><strong>LM Studio</strong></td><td><code>http://localhost:1234/v1</code></td><td><code>lm-studio</code></td><td>Modellabhängig</td></tr>
+  <tr><td><strong>Weitere</strong></td><td>Beliebig (OpenAI-kompatibel)</td><td>Anbieterabhängig</td><td>–</td></tr>
+</table>
+
+<p>Voraussetzung für die Kompatibilität ist die Unterstützung des Endpunkts <code>POST /v1/chat/completions</code> im OpenAI-Format.</p>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<h2>9. Erweiterungsmöglichkeiten</h2>
+
+<ul>
+  <li><strong>Streaming-Antworten:</strong> Erweiterung des <code>AIProvider</code>-Interface um eine optionale <code>stream()</code>-Methode für Echtzeit-Textausgabe</li>
+  <li><strong>Weitere Provider:</strong> Neue Klassen (z.B. <code>AnthropicProvider</code>, <code>GeminiProvider</code>) die <code>AIProvider</code> implementieren, ohne bestehenden Code zu ändern</li>
+  <li><strong>Prozessausführung:</strong> Nutzung der gleichen Provider-Schicht um die einzelnen Steps eines modellierten Prozesses tatsächlich auszuführen</li>
+  <li><strong>Serverseitige Persistierung:</strong> Ersetzen von <code>localStorage</code> durch eine REST-API mit Datenbankanbindung</li>
+  <li><strong>Authentifizierung:</strong> Backend-Proxy der API-Keys serverseitig hält, statt sie im Browser zu speichern</li>
+</ul>
+
+</body>
+</html>

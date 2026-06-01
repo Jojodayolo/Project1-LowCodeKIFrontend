@@ -33,6 +33,14 @@ export interface ProcessContext {
   agents: ProcessAgent[];
 }
 
+/** A saved process in the local catalog */
+export interface CatalogEntry {
+  id: string;
+  name: string;
+  xml: string;
+  createdAt: number;
+}
+
 /** Per-node (step) data */
 export interface ProcessNodeData {
   name: string;
