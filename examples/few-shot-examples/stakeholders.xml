@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<process name="Stakeholder_Analysis" type="STAKEHOLDER">
+  <variables>
+    <var name="project_description">Description of the project or initiative</var>
+    <var name="context">Additional context</var>
+    <var name="numberOfStakeholders">8</var>
+  </variables>
+  <containers>
+    <container name="project_context"/>
+    <container name="stakeholders"/>
+    <container name="interests_concerns"/>
+    <container name="stakeholder_mapping"/>
+    <container name="engagement_strategy"/>
+  </containers>
+  <outputs>
+    <output name="stakeholders" type="json"/>
+    <output name="interests_concerns" type="json"/>
+    <output name="stakeholder_mapping" type="json"/>
+    <output name="engagement_strategy" type="json"/>
+  </outputs>
+  <steps>
+    <step name="extract_context_and_stakeholders" writeTo="project_context stakeholders">
+      <system>You are a stakeholder analysis expert. Identify {{numberOfStakeholders}} key stakeholders for the project.</system>
+      <prompt>Project description: {{project_description}}
+Context: {{context}}
+Identify {{numberOfStakeholders}} stakeholders with their name and role.</prompt>
+      <response_schema>class Stakeholder(BaseModel):
+  name: str
+  role: str
+
+class ContextAndStakeholders(BaseModel):
+  stakeholders: list[Stakeholder]</response_schema>
+    </step>
+    <step name="identify_interests" readFrom="stakeholders" writeTo="interests_concerns">
+      <system>You analyze stakeholder perspectives for the project and identify their interests and power levels.</system>
+      <prompt>For each stakeholder, identify:
+- Top 3 interests for this project
+- Power level to influence (0-100)
+
+Stakeholders: {{stakeholders}}
+Project: {{project_description}}</prompt>
+      <response_schema>class Profile(BaseModel):
+  name: str
+  interests: list[str]
+  power: int
+
+class InterestsConcerns(BaseModel):
+  profiles: list[Profile]</response_schema>
+    </step>
+    <step name="map_stakeholders" readFrom="stakeholders interests_concerns" writeTo="stakeholder_mapping">
+      <system>You classify stakeholders into strategic groups based on power and interest.</system>
+      <prompt>Classify stakeholders into 4 groups:
+- Champions (high power, high interest)
+- Key Players (high power, mixed interest)
+- Subjects (low power, high interest)
+- Crowd (low power, low interest)
+
+Stakeholders: {{stakeholders}}
+Profiles: {{interests_concerns}}</prompt>
+      <response_schema>class Group(BaseModel):
+  name: str
+  stakeholders: list[str]
+  strategy: str
+
+class StakeholderMapping(BaseModel):
+  champions: Group
+  key_players: Group
+  subjects: Group
+  crowd: Group</response_schema>
+    </step>
+    <step name="develop_engagement" readFrom="stakeholder_mapping interests_concerns" writeTo="engagement_strategy">
+      <system>You develop engagement tactics for each stakeholder group.</system>
+      <prompt>Create engagement strategy for all groups:
+
+Mapping: {{stakeholder_mapping}}
+Profiles: {{interests_concerns}}
+
+For each group provide:
+- Engagement approach
+- Communication channels (email, meeting, workshop, etc)
+- Frequency (weekly, monthly, quarterly)</prompt>
+      <response_schema>class Engagement(BaseModel):
+  group_name: str
+  approach: str
+  channels: list[str]
+  frequency: str
+
+class EngagementStrategy(BaseModel):
+  strategies: list[Engagement]</response_schema>
+    </step>
+  </steps>
+</process>

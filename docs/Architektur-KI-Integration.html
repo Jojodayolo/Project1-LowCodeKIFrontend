@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <title>Architektur – KI-Integration AI Process Designer</title>
+  <style>
+    body { font-family: Calibri, Arial, sans-serif; font-size: 11pt; line-height: 1.5; margin: 2.5cm 3cm; color: #1a1a1a; }
+    h1 { font-size: 20pt; color: #1f4e79; border-bottom: 2px solid #1f4e79; padding-bottom: 6px; margin-top: 0; }
+    h2 { font-size: 14pt; color: #2e75b6; margin-top: 24pt; border-bottom: 1px solid #c5d9f1; padding-bottom: 4px; }
+    h3 { font-size: 11pt; color: #1f4e79; margin-top: 14pt; }
+    code, pre { font-family: Consolas, "Courier New", monospace; font-size: 9.5pt; background: #f4f4f4; border: 1px solid #ddd; border-radius: 3px; }
+    code { padding: 1px 4px; }
+    pre { padding: 10px 14px; line-height: 1.4; overflow-x: auto; }
+    table { border-collapse: collapse; width: 100%; margin: 10pt 0; font-size: 10pt; }
+    th { background: #2e75b6; color: white; padding: 6px 10px; text-align: left; }
+    td { padding: 5px 10px; border: 1px solid #c5d9f1; vertical-align: top; }
+    tr:nth-child(even) td { background: #f0f7ff; }
+    ul, ol { margin: 6pt 0; padding-left: 20pt; }
+    li { margin-bottom: 3pt; }
+    .subtitle { color: #555; font-size: 10pt; margin-bottom: 20pt; }
+    .box { background: #f0f7ff; border-left: 4px solid #2e75b6; padding: 8px 12px; margin: 10pt 0; }
+    .box-amber { background: #fffbeb; border-left: 4px solid #d97706; padding: 8px 12px; margin: 10pt 0; }
+    .diagram { font-family: Consolas, monospace; font-size: 9pt; background: #fafafa; border: 1px solid #ddd; padding: 12px; line-height: 1.6; }
+    .pagebreak { page-break-before: always; }
+    .tag { display: inline-block; background: #dbeafe; color: #1e40af; border-radius: 3px; padding: 0 5px; font-size: 9pt; font-family: Consolas, monospace; }
+  </style>
+</head>
+<body>
+
+<h1>Architektur – KI-Integration</h1>
+<p class="subtitle">Projekt: AI Process Designer &nbsp;|&nbsp; Hochschule Ruhr West – Master Informatik &nbsp;|&nbsp; Stand: Juni 2026</p>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<h2>1. Überblick</h2>
+
+<p>Der <strong>AI Process Designer</strong> ist ein Low-Code-Frontend zur visuellen Modellierung von KI-gestützten Entscheidungs- und Analyseprozessen. Die KI-Integration besteht aus drei Teilen:</p>
+
+<ol>
+  <li><strong>Provider-Abstraktion</strong> – eine austauschbare Schicht, die jeden OpenAI-kompatiblen LLM-Endpunkt unterstützt (OpenAI, Ollama, Azure, LM Studio …).</li>
+  <li><strong>KI-Assistent (ChatPanel)</strong> – ein konversationeller Assistent, der natürlichsprachliche Beschreibungen in ausführbare XML-Prozessdefinitionen übersetzt, unterstützt durch Few-Shot-Beispiele.</li>
+  <li><strong>LLM-as-a-Judge</strong> – ein zweiter, unabhängiger LLM-Provider, der generierte XML-Definitionen iterativ bewertet und das Ergebnis verbessert, bis ein Score-Ziel oder eine Iterationsgrenze erreicht wird.</li>
+</ol>
+
+<div class="box">
+  <strong>Kernprinzip:</strong> Das System ist modellunabhängig. Generator und Judge können auf vollständig getrennten Endpunkten und mit unterschiedlichen Modellen betrieben werden – konfigurierbar über Umgebungsvariablen, ohne Codeänderung.
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<h2>2. Architekturdiagramm</h2>
+
+<pre class="diagram">
+┌──────────────────────────────────────────────────────────────────────┐
+│                          Browser / Frontend                           │
+│                                                                       │
+│  ┌─────────────┐    ┌─────────────────────────────────────────────┐  │
+│  │   Designer  │    │                 ChatPanel                    │  │
+│  │  (Canvas +  │◄───│  - Textarea / Gesprächsverlauf (historyRef) │  │
+│  │   Sidebar)  │    │  - Modell-Dropdown (GET /models)            │  │
+│  │             │◄───│  - extractXml() → "Als Graph übernehmen"    │  │
+│  └─────────────┘    │  - LLM-as-a-Judge Toggle (⚖️)               │  │
+│                     └──────────────────┬────────────────────────── ┘  │
+│                                        │                              │
+│               ┌────────────────────────┼───────────────────────┐     │
+│               │       src/lib/ai/index.ts                       │     │
+│               │                                                  │     │
+│               │  resolveConfig(meta)        resolveJudgeConfig() │     │
+│               │       ↓                           ↓              │     │
+│               │  createProvider()           createProvider()     │     │
+│               │       ↓                           ↓              │     │
+│               │  Generator-LLM              Judge-LLM            │     │
+│               └────────┬──────────────────────────┬─────────────┘     │
+└────────────────────────┼──────────────────────────┼───────────────────┘
+                         │ HTTP fetch()              │ HTTP fetch()
+              ┌──────────▼──────────┐    ┌──────────▼──────────┐
+              │  Ollama / OpenAI /  │    │  OpenAI / anderer   │
+              │  beliebig kompatibel│    │  Provider (getrennt) │
+              └─────────────────────┘    └─────────────────────┘
+</pre>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<h2 class="pagebreak">3. Dateistruktur</h2>
+
+<pre class="diagram">
+src/
+├── lib/
+│   └── ai/
+│       ├── types.ts                  ← AIProvider, AIConfig, ChatMessage
+│       ├── index.ts                  ← resolveConfig(), resolveJudgeConfig(), createProvider()
+│       ├── few-shot-examples.ts      ← lädt Dateien per import.meta.glob, baut ChatMessage[]
+│       └── providers/
+│           └── openai-compat.ts      ← OpenAICompatProvider (fetch-basiert, AbortSignal)
+│
+└── components/
+    └── process-designer/
+        ├── ChatPanel.tsx             ← KI-Assistent UI, Judge-Loop, XML-Extraktion
+        ├── Designer.tsx              ← Hauptkomponente, Resize, Katalog-Wiring
+        ├── Sidebar.tsx               ← Prozesskatalog + Vorlagen + Bausteine
+        ├── types.ts                  ← ProcessMeta, CatalogEntry, ProcessNodeData …
+        └── parseProcessXml.ts        ← XML → ReactFlow Nodes/Edges
+
+examples/
+├── few-shot-examples/                ← Aktive Few-Shot-Beispiele (werden beim Build eingebunden)
+│   ├── stakeholders.txt              ← Natürlichsprachlicher Prompt
+│   ├── stakeholders.xml              ← Passende XML-Prozessdefinition
+│   ├── risiko_analyse.txt
+│   ├── risiko_analyse.xml
+│   ├── qoc.txt
+│   └── qoc.xml
+├── game_theory.xml / .prompt.txt     ← Referenzbeispiele (nicht aktiv im Few-Shot)
+├── sequence.xml / .prompt.txt
+└── vester.xml / .prompt.txt
+
+.env.local                            ← API-Keys + Endpunkt-Konfiguration (nicht in Git)
+.env.example                          ← Vorlage ohne sensitive Werte
+</pre>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<h2>4. Typen und Interfaces (<code>src/lib/ai/types.ts</code>)</h2>
+
+<table>
+  <tr><th>Interface / Typ</th><th>Felder</th><th>Beschreibung</th></tr>
+  <tr>
+    <td><code>AIProvider</code></td>
+    <td><code>chat(messages[], signal?)</code></td>
+    <td>Vertrag für alle LLM-Provider. <code>AbortSignal</code> erlaubt Abbruch laufender Requests.</td>
+  </tr>
+  <tr>
+    <td><code>AIConfig</code></td>
+    <td><code>baseUrl, apiKey, model</code></td>
+    <td>Laufzeit-Konfiguration eines Providers.</td>
+  </tr>
+  <tr>
+    <td><code>ChatMessage</code></td>
+    <td><code>role, content</code></td>
+    <td>Einzelne Nachricht im Gesprächsverlauf. Role: <code>"user"</code>, <code>"assistant"</code> oder <code>"system"</code>.</td>
+  </tr>
+</table>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<h2>5. Provider-System</h2>
+
+<h3>5.1 OpenAICompatProvider (<code>providers/openai-compat.ts</code>)</h3>
+<p>Einzige Provider-Implementierung. Sendet <code>POST {baseUrl}/chat/completions</code> mit Bearer-Token. Unterstützt natives <code>AbortSignal</code> für Anfrage-Abbruch. Liefert sprechende Fehlermeldungen für HTTP 401, 404 und Netzwerkfehler.</p>
+
+<h3>5.2 Konfigurationsauflösung (<code>index.ts</code>)</h3>
+<p>Zwei Funktionen bauen die Konfiguration nach einer Prioritätskette zusammen:</p>
+
+<table>
+  <tr><th>Funktion</th><th>Priorität der Quellen (höchste zuerst)</th></tr>
+  <tr>
+    <td><code>resolveConfig(meta?)</code><br/><em>Generator-LLM</em></td>
+    <td>
+      1. <code>ProcessMeta.llmHost</code> / <code>ProcessMeta.model</code> (prozessspezifisch)<br/>
+      2. <code>VITE_AI_BASE_URL</code> / <code>VITE_AI_API_KEY</code> / <code>VITE_AI_MODEL</code><br/>
+      3. Fallback: <code>https://api.openai.com/v1</code>, Modell <code>gpt-4o-mini</code>
+    </td>
+  </tr>
+  <tr>
+    <td><code>resolveJudgeConfig(meta?)</code><br/><em>Judge-LLM</em></td>
+    <td>
+      1. <code>VITE_JUDGE_BASE_URL</code> / <code>VITE_JUDGE_API_KEY</code> / <code>VITE_JUDGE_MODEL</code><br/>
+      2. Fallback: identisch mit <code>resolveConfig()</code> (gleicher Endpunkt, anderes Modell wählbar)
+    </td>
+  </tr>
+</table>
+
+<div class="box-amber">
+  <strong>Erweiterbarkeit:</strong> Um einen neuen Provider hinzuzufügen (z.B. Anthropic, Gemini), genügt eine neue Klasse die <code>AIProvider</code> implementiert. <code>createProvider()</code> wird um einen Zweig erweitert – alle darüberliegenden Schichten bleiben unverändert.
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<h2 class="pagebreak">6. Konfiguration (.env.local)</h2>
+
+<pre>
+# ── Generator-LLM ─────────────────────────────────────────────────────
+VITE_AI_BASE_URL=http://localhost:11434/v1   # Ollama lokal
+VITE_AI_API_KEY=ollama
+VITE_AI_MODEL=qwen2.5:7b
+
+# ── Judge-LLM (separat – leer = identisch mit Generator) ──────────────
+VITE_JUDGE_BASE_URL=https://api.openai.com/v1
+VITE_JUDGE_API_KEY=sk-...
+VITE_JUDGE_MODEL=gpt-4o-mini
+</pre>
+
+<table>
+  <tr><th>Variable</th><th>Beschreibung</th><th>Betrifft</th></tr>
+  <tr><td><code>VITE_AI_BASE_URL</code></td><td>Basis-URL des Generator-Endpunkts</td><td>Generator</td></tr>
+  <tr><td><code>VITE_AI_API_KEY</code></td><td>API-Key des Generators</td><td>Generator</td></tr>
+  <tr><td><code>VITE_AI_MODEL</code></td><td>Standardmodell des Generators</td><td>Generator</td></tr>
+  <tr><td><code>VITE_JUDGE_BASE_URL</code></td><td>Basis-URL des Judge-Endpunkts</td><td>Judge</td></tr>
+  <tr><td><code>VITE_JUDGE_API_KEY</code></td><td>API-Key des Judges</td><td>Judge</td></tr>
+  <tr><td><code>VITE_JUDGE_MODEL</code></td><td>Standardmodell des Judges</td><td>Judge</td></tr>
+</table>
+
+<p><strong>Hinweis:</strong> <code>.env.local</code> wird von Vite automatisch geladen und ist in <code>.gitignore</code> ausgeschlossen. API-Keys werden niemals in das Repository eingecheckt.</p>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<h2>7. KI-Assistent – ChatPanel</h2>
+
+<h3>7.1 System-Prompt (Generator)</h3>
+<p>Der Generator-LLM erhält bei jedem Aufruf einen festen System-Prompt, der:</p>
+<ul>
+  <li>die Rolle als XML-Prozess-Generator definiert und alle anderen Ausgabeformate explizit verbietet (kein Python, kein JSON, kein Pseudocode)</li>
+  <li>das XML-Schema erklärt (<code>&lt;process&gt;</code>, <code>&lt;variables&gt;</code>, <code>&lt;containers&gt;</code>, <code>&lt;steps&gt;</code> mit <code>readFrom</code>, <code>writeTo</code>, <code>loopOver</code>)</li>
+  <li>anweist, Variablen und Container selbstständig aus der Beschreibung abzuleiten</li>
+  <li>das exakte Antwortformat vorschreibt: kurzer Beschreibungstext + Schrittliste + XML-Block</li>
+</ul>
+
+<h3>7.2 Few-Shot Examples (<code>few-shot-examples.ts</code>)</h3>
+<p>Beim ersten Aufruf einer neuen Konversation werden (Prompt → XML)-Beispielpaare als zusätzliche <code>user</code>/<code>assistant</code>-Nachrichten vor die eigentliche Anfrage des Nutzers eingefügt. Dies verbessert die Konsistenz und Qualität der generierten XML erheblich.</p>
+
+<p>Die Beispiele sind <strong>nicht im Code hardcodiert</strong>, sondern werden zur Build-Zeit per <code>import.meta.glob</code> aus dem Ordner <code>examples/few-shot-examples/</code> geladen. Jedes Beispiel besteht aus zwei Dateien mit identischem Namen:</p>
+
+<table>
+  <tr><th>Datei</th><th>Inhalt</th></tr>
+  <tr><td><code>name.txt</code></td><td>Natürlichsprachlicher Prompt (so wie ihn ein Nutzer eingeben würde)</td></tr>
+  <tr><td><code>name.xml</code></td><td>Zugehörige XML-Prozessdefinition als Referenzantwort</td></tr>
+</table>
+
+<p>Aktuell aktive Beispiele und ihre abgedeckten Muster:</p>
+
+<table>
+  <tr><th>Beispiel</th><th>Abgedecktes Muster</th></tr>
+  <tr><td>stakeholders</td><td>4-Schritt-Prozess mit Klassifizierung und Strategieentwicklung</td></tr>
+  <tr><td>risiko_analyse</td><td>4-Schritt-Prozess mit Kategorisierung (kritisch / hoch / mittel / niedrig)</td></tr>
+  <tr><td>qoc</td><td>7-Schritt-Prozess mit <code>loopOver</code>-Schritten (mehrere Stakeholder-Perspektiven)</td></tr>
+</table>
+
+<div class="box">
+  <strong>Neues Beispiel hinzufügen:</strong> Eine neue <code>name.txt</code> und <code>name.xml</code> mit identischem Dateinamen in <code>examples/few-shot-examples/</code> ablegen – der Code lädt sie automatisch beim nächsten Build. Kein TypeScript anfassen nötig.
+</div>
+
+<div class="box">
+  Few-Shot-Nachrichten werden nur beim <strong>ersten</strong> Aufruf einer Konversation eingefügt. Bei Folgenachrichten enthält der Gesprächsverlauf bereits genug Kontext.
+</div>
+
+<h3>7.3 Nachrichtenfluss (erster Aufruf)</h3>
+<pre class="diagram">
+API-Nachrichten (apiMessages[]):
+  [0]  system   : SYSTEM_PROMPT
+  [1]  system   : Aktueller Prozess (wenn vorhanden)  ← nur bei Änderungswunsch
+  [2]  user     : Stakeholder-Beispiel-Prompt          ← Few-Shot #1
+  [3]  assistant: Stakeholder-Beispiel-XML             ← Few-Shot #1
+  [4]  user     : Risiko-Beispiel-Prompt               ← Few-Shot #2
+  [5]  assistant: Risiko-Beispiel-XML                  ← Few-Shot #2
+  [6]  user     : QOC-Beispiel-Prompt                  ← Few-Shot #3
+  [7]  assistant: QOC-Beispiel-XML                     ← Few-Shot #3
+  [8]  user     : Nachricht des Nutzers                ← actual request
+</pre>
+
+<h3>7.4 XML-Extraktion</h3>
+<p>Die Funktion <code>extractXml()</code> erkennt XML in zwei Formaten und trennt es vom Anzeigetext:</p>
+<ul>
+  <li>Markdown-Codeblock: <code>```xml … ```</code></li>
+  <li>Rohes XML direkt im Text: <code>&lt;process&gt; … &lt;/process&gt;</code></li>
+</ul>
+<p>Das extrahierte XML wird separat in <code>DisplayMsg.xml</code> gespeichert und als „Als Graph übernehmen"-Button im Chat angezeigt. Beim Klick wird <code>parseProcessXml()</code> aufgerufen, das ReactFlow-Nodes und -Edges erzeugt.</p>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<h2 class="pagebreak">8. LLM-as-a-Judge</h2>
+
+<h3>8.1 Konzept</h3>
+<p>Nach der initialen XML-Generierung durch den Generator-LLM bewertet ein zweiter, vollständig unabhängiger Judge-LLM die Qualität der Ausgabe. Basierend auf Feedback des Judges verbessert der Generator iterativ die XML. Dieses Muster ist als <em>LLM-as-a-Judge</em> bekannt.</p>
+
+<div class="box-amber">
+  <strong>Unabhängigkeit:</strong> Generator und Judge teilen <strong>keinen</strong> Kontext. Der Judge sieht nie, wer den Text generiert hat. Der Generator sieht nie, dass ein Judge involviert ist – das Feedback wird ihm als normale Nutzeranforderung präsentiert.
+</div>
+
+<h3>8.2 Judge-System-Prompt</h3>
+<p>Der Judge erhält einen eigenen System-Prompt, der ihn auf die Bewertungsrolle festlegt und ein exaktes Antwortformat erzwingt:</p>
+<pre>
+SCORE: [Ganzzahl 0-100]
+FEEDBACK: [Konkrete Verbesserungsvorschläge auf Deutsch]
+</pre>
+
+<p>Bewertungskriterien:</p>
+<ul>
+  <li><strong>Vollständigkeit</strong> – Sind alle genannten Anforderungen und Schritte vorhanden?</li>
+  <li><strong>Korrektheit</strong> – Ist die XML-Struktur valide und konform zum Schema?</li>
+  <li><strong>Sinnhaftigkeit</strong> – Ist der Prozessfluss logisch, werden Variablen/Container korrekt eingesetzt?</li>
+</ul>
+
+<h3>8.3 Ablauf einer Iteration</h3>
+
+<pre class="diagram">
+┌──────────────────────────────────────────────────────────────┐
+│  Initialer Generator-Aufruf                                  │
+│  [system: SYSTEM_PROMPT] + [few-shot] + [user: Beschreibung] │
+│  → XML₀                                                      │
+└──────────────────────────────┬───────────────────────────────┘
+                               │
+                    ┌──────────▼───────────┐
+                    │  Iteration 1..N      │
+                    │                      │
+                    │  Judge bewertet XML  │
+                    │  → SCORE + FEEDBACK  │
+                    │                      │
+                    │  Score ≥ Ziel?       │
+                    │  oder iter ≥ Max?    │
+                    │  → JA: Schleife Ende │
+                    │                      │
+                    │  Generator verbessert│
+                    │  XML mit Feedback    │
+                    │  → XML_neu           │
+                    └──────────┬───────────┘
+                               │
+               ┌───────────────▼────────────────────┐
+               │  Bestes Ergebnis (höchster Score)   │
+               │  wird dem Nutzer präsentiert         │
+               └─────────────────────────────────────┘
+</pre>
+
+<h3>8.4 Separate Kontexte</h3>
+
+<table>
+  <tr><th>LLM</th><th>Nachrichten pro Aufruf</th></tr>
+  <tr>
+    <td><strong>Judge</strong></td>
+    <td>
+      <code>[system: JUDGE_SYSTEM_PROMPT]</code><br/>
+      <code>[user: Nutzerbeschreibung + aktuelle XML]</code>
+    </td>
+  </tr>
+  <tr>
+    <td><strong>Generator</strong> (Verbesserung)</td>
+    <td>
+      <code>[system: SYSTEM_PROMPT]</code><br/>
+      <code>[user: Originale Nutzerbeschreibung]</code><br/>
+      <code>[assistant: Aktuelle XML]</code><br/>
+      <code>[user: "Folgende Anforderungen wurden noch nicht umgesetzt …" + Feedback]</code>
+    </td>
+  </tr>
+</table>
+
+<h3>8.5 Best-Score-Tracking</h3>
+<p>Da spätere Iterationen schlechter als frühere sein können, werden <code>bestScore</code> und <code>bestXmlStr</code> separat über alle Iterationen hinweg geführt. Am Ende wird stets die XML mit dem höchsten Judge-Score präsentiert – unabhängig davon, in welcher Iteration sie entstanden ist.</p>
+
+<h3>8.6 Stopp-Bedingungen</h3>
+<table>
+  <tr><th>Modus</th><th>Bedingung</th><th>Konfigurierbar</th></tr>
+  <tr><td>Score-Modus</td><td>Score ≥ Zielwert (Standard: 80/100)</td><td>Ja, Eingabefeld im Panel</td></tr>
+  <tr><td>Iterations-Modus</td><td>Maximale Anzahl Iterationen (Standard: 3)</td><td>Ja, Eingabefeld im Panel</td></tr>
+  <tr><td>Abbruch</td><td>Nutzer klickt „Abbrechen"</td><td>–</td></tr>
+</table>
+
+<h3>8.7 Abbruchmechanismus (AbortController)</h3>
+<p>Beim Start eines Requests wird ein <code>AbortController</code> erzeugt und in einem <code>useRef</code> gehalten. Das Signal wird an jeden <code>fetch()</code>-Aufruf weitergegeben – sowohl beim Generator als auch beim Judge. Der „Abbrechen"-Button ruft <code>abortRef.current.abort()</code> auf. Der <code>OpenAICompatProvider</code> fängt <code>AbortError</code> separat ab und lässt ihn nach oben propagieren, wo er als „⊘ Prozess abgebrochen" im Chat angezeigt wird. Das beste bis dahin erreichte Ergebnis wird dem Nutzer dennoch angeboten.</p>
+
+<h3>8.8 Judge-UI im ChatPanel</h3>
+<ul>
+  <li><strong>Toggle-Button (⚖️)</strong> im Header aktiviert/deaktiviert den Judge-Modus</li>
+  <li><strong>Modell-Selector</strong> – lädt Modellliste vom Judge-Endpunkt (<code>VITE_JUDGE_BASE_URL</code>)</li>
+  <li><strong>Stopp-Konfiguration</strong> – Radio-Buttons für Score-Modus vs. Iterations-Modus</li>
+  <li><strong>Judge-Nachrichten (⚖️)</strong> – standardmäßig eingeklappt, zeigen nur Score; durch Klick erweiterbar für vollständiges Feedback</li>
+  <li><strong>Abbrechen-Button</strong> – ersetzt den Senden-Button während ein Request läuft</li>
+</ul>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<h2 class="pagebreak">9. Unterstützte LLM-Provider</h2>
+
+<table>
+  <tr><th>Provider</th><th>Base URL</th><th>API-Key</th><th>Empfohlenes Modell</th></tr>
+  <tr><td><strong>Ollama</strong> (lokal)</td><td><code>http://localhost:11434/v1</code></td><td><code>ollama</code></td><td><code>qwen2.5:7b</code></td></tr>
+  <tr><td><strong>OpenAI</strong></td><td><code>https://api.openai.com/v1</code></td><td>OpenAI API-Key</td><td><code>gpt-4o-mini</code>, <code>gpt-4o</code></td></tr>
+  <tr><td><strong>Azure OpenAI</strong></td><td>Azure Deployment URL</td><td>Azure API-Key</td><td>Deploymentabhängig</td></tr>
+  <tr><td><strong>LM Studio</strong></td><td><code>http://localhost:1234/v1</code></td><td><code>lm-studio</code></td><td>Modellabhängig</td></tr>
+  <tr><td><strong>Weitere</strong></td><td>Beliebig (OpenAI-kompatibel)</td><td>Anbieterabhängig</td><td>–</td></tr>
+</table>
+
+<p>Voraussetzung: Unterstützung von <code>POST /v1/chat/completions</code> und <code>GET /v1/models</code> im OpenAI-Format.</p>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<h2>10. Nachrichtentypen im Chat</h2>
+
+<table>
+  <tr><th>Rolle (<code>MsgRole</code>)</th><th>Darstellung</th><th>Inhalt</th></tr>
+  <tr><td><code>user</code></td><td>Blaue Bubble, rechts</td><td>Nutzereingabe</td></tr>
+  <tr><td><code>ai</code></td><td>Graue Bubble, links</td><td>Generator-Antwort + optionaler „Als Graph übernehmen"-Button</td></tr>
+  <tr><td><code>judge</code></td><td>Amber-Bubble mit ⚖️, standardmäßig eingeklappt</td><td>Score (0–100) + Feedback des Judge-LLMs</td></tr>
+  <tr><td><code>info</code></td><td>Kleiner, kursiver Text, zentriert</td><td>Statusmeldungen: Iteration läuft, Ziel erreicht, Abgebrochen</td></tr>
+</table>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<h2>11. Erweiterungsmöglichkeiten</h2>
+
+<ul>
+  <li><strong>Streaming-Antworten:</strong> Erweiterung des <code>AIProvider</code>-Interface um eine optionale <code>stream()</code>-Methode für Echtzeit-Textausgabe im Chat.</li>
+  <li><strong>Weitere Provider:</strong> Neue Klassen (z.B. <code>AnthropicProvider</code>, <code>GeminiProvider</code>) die <code>AIProvider</code> implementieren, ohne bestehenden Code zu ändern.</li>
+  <li><strong>Weitere Few-Shot-Beispiele:</strong> Neue <code>.xml</code>/<code>.prompt.txt</code>-Paare in <code>/examples</code> anlegen und in <code>few-shot-examples.ts</code> einbinden.</li>
+  <li><strong>Prozessausführung:</strong> Nutzung der gleichen Provider-Schicht, um die einzelnen Steps eines modellierten Prozesses tatsächlich auszuführen.</li>
+  <li><strong>Serverseitige Persistierung:</strong> Ersetzen von <code>localStorage</code> durch eine REST-API mit Datenbankanbindung.</li>
+  <li><strong>Authentifizierung:</strong> Backend-Proxy, der API-Keys serverseitig hält, statt sie im Browser in <code>.env.local</code> zu speichern.</li>
+</ul>
+
+</body>
+</html>
