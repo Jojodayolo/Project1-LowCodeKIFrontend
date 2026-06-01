@@ -10,5 +10,5 @@ export interface AIConfig {
 }
 
 export interface AIProvider {
-  chat(messages: ChatMessage[]): Promise<string>;
+  chat(messages: ChatMessage[], signal?: AbortSignal): Promise<string>;
 }

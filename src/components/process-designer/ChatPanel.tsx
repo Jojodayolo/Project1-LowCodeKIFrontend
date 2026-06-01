@@ -1,9 +1,12 @@
 import React, { useEffect, useRef, useState } from "react";
-import { createProvider, resolveConfig, type ChatMessage } from "@/lib/ai";
+import { createProvider, resolveConfig, resolveJudgeConfig, type ChatMessage } from "@/lib/ai";
+import { buildFewShotMessages } from "@/lib/ai/few-shot-examples";
 import type { ProcessContext } from "./types";
 
+type MsgRole = "user" | "ai" | "judge" | "info";
+
 interface DisplayMsg {
-  role: "user" | "ai";
+  role: MsgRole;
   text: string;
   xml?: string;
 }
@@ -11,6 +14,11 @@ interface DisplayMsg {
 const SYSTEM_PROMPT = `Du bist ein Assistent für einen visuellen KI-Prozessdesigner.
 Du hilfst dabei, KI-Workflows als XML zu modellieren.
 Antworte immer auf Deutsch.
+
+## ABSOLUTES VERBOT
+Schreibe NIEMALS: Python-Code, JavaScript, Pseudocode, JSON, Tabellen, Codeblöcke mit einer anderen Sprache als xml, oder allgemeine Erklärungen ohne XML.
+Du bist kein Programmierer und kein Tutor. Du erzeugst ausschließlich XML-Prozessdefinitionen.
+Falls dein nächster Satz mit "import", "def ", "class ", oder einem Code-Block in einer anderen Sprache als XML beginnen würde – lösche ihn und schreibe stattdessen XML.
 
 ## Antwortformat (strikt einhalten)
 Schreibe genau zwei Dinge – nichts anderes:
@@ -69,6 +77,27 @@ Der Nutzer soll KEINE Variablen oder Container manuell nennen müssen – du erk
 - response_schema ist ein Python-Pydantic-Modell
 - Wähle aussagekräftige englische Namen für Steps, Variablen und Container (snake_case)`;
 
+const JUDGE_SYSTEM_PROMPT = `Du bist ein LLM-Judge für KI-Prozessdefinitionen im XML-Format.
+Deine Aufgabe: Bewerte wie gut eine generierte XML-Prozessdefinition die Anforderungen des Nutzers erfüllt.
+
+Bewertungskriterien:
+- Vollständigkeit: Sind alle genannten Anforderungen und Prozessschritte vorhanden?
+- Korrektheit: Ist die XML-Struktur valide und konform zum vorgegebenen Format?
+- Sinnhaftigkeit: Ist der Prozessfluss logisch und werden Variablen/Container korrekt eingesetzt?
+
+Antworte EXAKT in diesem Format – kein weiterer Text davor oder danach:
+SCORE: [Ganzzahl 0-100]
+FEEDBACK: [Konkrete Verbesserungsvorschläge auf Deutsch für das generierende LLM]`;
+
+function parseJudgeResponse(text: string): { score: number; feedback: string } {
+  const scoreMatch = /SCORE:\s*(\d+(?:\.\d+)?)/i.exec(text);
+  const feedbackMatch = /FEEDBACK:\s*([\s\S]+)/i.exec(text);
+  return {
+    score: Math.min(100, Math.max(0, scoreMatch ? parseFloat(scoreMatch[1]) : 0)),
+    feedback: feedbackMatch ? feedbackMatch[1].trim() : text.trim(),
+  };
+}
+
 function renderMarkdown(text: string) {
   const lines = text.split("\n");
   const result: React.ReactNode[] = [];
@@ -117,14 +146,12 @@ function renderMarkdown(text: string) {
 }
 
 function extractXml(text: string): { displayText: string; xml: string | undefined } {
-  // 1. Code block: ```xml ... ``` (case-insensitive lang tag)
   const codeBlock = /```xml\s*([\s\S]+?)```/i.exec(text);
   if (codeBlock) {
     const xml = codeBlock[1].trim();
     const displayText = text.replace(codeBlock[0], "").trim() || "Ich habe eine XML-Prozessdefinition erzeugt:";
     return { displayText, xml };
   }
-  // 2. Raw XML: <?xml ... </process> or <process ... </process>
   const rawXml = /((?:<\?xml[\s\S]*?)?<process[\s\S]*?<\/process>)/i.exec(text);
   if (rawXml) {
     const xml = rawXml[1].trim();
@@ -165,8 +192,20 @@ export function ChatPanel({
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [models, setModels] = useState<string[]>([]);
+
+  const [judgeEnabled, setJudgeEnabled] = useState(false);
+  const [judgeModel, setJudgeModel] = useState("");
+  const [judgeModels, setJudgeModels] = useState<string[]>([]);
+  const [stopMode, setStopMode] = useState<"score" | "iterations">("score");
+  const [scoreTarget, setScoreTarget] = useState(80);
+  const [maxIter, setMaxIter] = useState(3);
+
+  const [expandedJudge, setExpandedJudge] = useState<Set<number>>(new Set());
+
   const historyRef = useRef<ChatMessage[]>([]);
+  const abortRef = useRef<AbortController | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const adjustHeight = () => {
     const el = textareaRef.current;
@@ -180,9 +219,26 @@ export function ChatPanel({
 
   useEffect(() => {
     fetchModels(config.baseUrl, config.apiKey).then(setModels).catch(() => {});
-    // re-fetch when baseUrl or apiKey changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [config.baseUrl, config.apiKey]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  // Fetch judge models when judge is enabled
+  useEffect(() => {
+    if (!judgeEnabled) return;
+    const judgeConfig = resolveJudgeConfig(processContext.meta);
+    fetchModels(judgeConfig.baseUrl, judgeConfig.apiKey).then((ms) => {
+      setJudgeModels(ms);
+      setJudgeModel((prev) => (prev && ms.includes(prev) ? prev : ms[0] ?? ""));
+    }).catch(() => setJudgeModels([]));
+  }, [judgeEnabled, processContext.meta]);
+
+  const abort = () => {
+    abortRef.current?.abort();
+  };
 
   const send = async () => {
     const text = input.trim();
@@ -194,78 +250,312 @@ export function ChatPanel({
     historyRef.current = [...historyRef.current, { role: "user", content: text }];
     setLoading(true);
 
+    const ac = new AbortController();
+    abortRef.current = ac;
+
+    const addMsg = (msg: DisplayMsg) => setMessages((m) => [...m, msg]);
+
     try {
       const provider = createProvider(config);
+      const isFirstMessage = historyRef.current.length === 1;
       const apiMessages: ChatMessage[] = [
         { role: "system", content: SYSTEM_PROMPT },
         ...(currentXml.trim()
           ? [{ role: "system" as const, content: `Aktueller Prozess im Designer:\n\`\`\`xml\n${currentXml}\n\`\`\`\n\nPasse diesen Prozess bei Änderungswünschen des Nutzers gezielt an und gib immer den vollständigen aktualisierten XML-Block aus.` }]
           : []),
+        ...(isFirstMessage ? buildFewShotMessages() : []),
         ...historyRef.current,
       ];
-      const response = await provider.chat(apiMessages);
 
+      const response = await provider.chat(apiMessages, ac.signal);
       const { displayText, xml: xmlString } = extractXml(response);
+      historyRef.current = [...historyRef.current, { role: "assistant", content: response }];
+      addMsg({ role: "ai", text: displayText, xml: xmlString });
 
-      historyRef.current = [
-        ...historyRef.current,
-        { role: "assistant", content: response },
-      ];
-      setMessages((m) => [
-        ...m,
-        { role: "ai", text: displayText, xml: xmlString },
-      ]);
+      if (judgeEnabled && xmlString && judgeModel) {
+        const judgeConfig = {
+          ...resolveJudgeConfig(processContext.meta),
+          model: judgeModel,
+        };
+        const judgeProvider = createProvider(judgeConfig);
+
+        let currentXmlStr = xmlString;
+        let bestXmlStr = xmlString;
+        let bestScore = -1;
+        const limit = stopMode === "iterations" ? maxIter : 10;
+        let loopEndedCleanly = false;
+
+        for (let iter = 1; iter <= limit; iter++) {
+          if (ac.signal.aborted) break;
+
+          addMsg({ role: "info", text: `⟳ Iteration ${iter}${stopMode === "iterations" ? ` von ${maxIter}` : ""}: Judge bewertet XML…` });
+
+          let judgeResponse: string;
+          try {
+            judgeResponse = await judgeProvider.chat(
+              [
+                { role: "system", content: JUDGE_SYSTEM_PROMPT },
+                { role: "user", content: `Nutzerbeschreibung:\n${text}\n\nGenerierte XML:\n\`\`\`xml\n${currentXmlStr}\n\`\`\`` },
+              ],
+              ac.signal,
+            );
+          } catch {
+            if (ac.signal.aborted) break;
+            throw new Error("Judge-LLM hat einen Fehler zurückgegeben.");
+          }
+
+          if (ac.signal.aborted) break;
+
+          const { score, feedback } = parseJudgeResponse(judgeResponse);
+          const isBest = score > bestScore;
+          if (isBest) {
+            bestScore = score;
+            bestXmlStr = currentXmlStr;
+          }
+          addMsg({ role: "judge", text: `**Score: ${score}/100**${isBest ? " ★ bisher bestes Ergebnis" : ""}\n\n${feedback}` });
+
+          const goalReached =
+            stopMode === "score" ? score >= scoreTarget : iter >= maxIter;
+
+          if (goalReached) {
+            addMsg({
+              role: "info",
+              text: stopMode === "score"
+                ? `✓ Ziel erreicht: Score ${score}/100 ≥ ${scoreTarget}/100`
+                : `✓ ${maxIter} Iterationen abgeschlossen`,
+            });
+            loopEndedCleanly = true;
+            break;
+          }
+
+          if (ac.signal.aborted) break;
+
+          let improvedResponse: string;
+          try {
+            improvedResponse = await provider.chat(
+              [
+                { role: "system", content: SYSTEM_PROMPT },
+                { role: "user", content: text },
+                { role: "assistant", content: `\`\`\`xml\n${currentXmlStr}\n\`\`\`` },
+                {
+                  role: "user",
+                  content: `Folgende Anforderungen wurden noch nicht vollständig umgesetzt – passe die XML direkt an:\n\n${feedback}\n\nSetze jeden Punkt ohne Erklärung oder Begründung direkt in der XML um.`,
+                },
+              ],
+              ac.signal,
+            );
+          } catch {
+            if (ac.signal.aborted) break;
+            throw new Error("Generator-LLM hat beim Verbessern einen Fehler zurückgegeben.");
+          }
+
+          if (ac.signal.aborted) break;
+
+          const { displayText: improvedText, xml: improvedXml } = extractXml(improvedResponse);
+          if (improvedXml) {
+            currentXmlStr = improvedXml;
+            historyRef.current = [...historyRef.current, { role: "assistant", content: improvedResponse }];
+          }
+          addMsg({ role: "ai", text: improvedText, xml: improvedXml });
+        }
+
+        if (ac.signal.aborted) {
+          addMsg({ role: "info", text: "⊘ Prozess abgebrochen." });
+          if (bestScore >= 0) {
+            addMsg({ role: "ai", text: `Bestes Ergebnis vor Abbruch (Score: ${bestScore}/100):`, xml: bestXmlStr });
+          }
+        } else if (loopEndedCleanly) {
+          addMsg({
+            role: "ai",
+            text: `Bestes Ergebnis nach Judge-Optimierung (Score: ${bestScore}/100):`,
+            xml: bestXmlStr,
+          });
+        } else if (bestScore >= 0) {
+          addMsg({ role: "info", text: `Maximale Iterationen erreicht (bester Score: ${bestScore}/100).` });
+          addMsg({ role: "ai", text: "Bestes erreichtes Ergebnis:", xml: bestXmlStr });
+        }
+      }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setMessages((m) => [
-        ...m,
-        { role: "ai", text: `Fehler: ${msg}` },
-      ]);
+      if (ac.signal.aborted) {
+        addMsg({ role: "info", text: "⊘ Prozess abgebrochen." });
+      } else {
+        const msg = err instanceof Error ? err.message : String(err);
+        addMsg({ role: "ai", text: `Fehler: ${msg}` });
+      }
     } finally {
       setLoading(false);
+      abortRef.current = null;
     }
   };
 
   return (
     <aside className="flex h-full flex-col border-l border-border bg-sidebar text-sidebar-foreground" style={{ width }}>
-      <div className="flex items-center justify-between border-b border-sidebar-border px-4 py-3">
-        <div className="flex items-center gap-2">
+      {/* Header */}
+      <div className="flex items-center justify-between border-b border-sidebar-border px-4 py-3 gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           <span className="h-2 w-2 rounded-full bg-primary animate-pulse" />
           <h3 className="text-sm font-semibold">KI-Assistent</h3>
         </div>
-        {models.length > 0 ? (
-          <select
-            value={currentModel}
-            onChange={(e) => onModelChange(e.target.value)}
-            className="rounded-md border border-border bg-input px-2 py-1 text-[11px] text-foreground outline-none focus:border-primary/60 max-w-[160px]"
-            title="Modell wechseln"
+        <div className="flex items-center gap-1.5 min-w-0">
+          {models.length > 0 ? (
+            <select
+              value={currentModel}
+              onChange={(e) => onModelChange(e.target.value)}
+              className="rounded-md border border-border bg-input px-2 py-1 text-[11px] text-foreground outline-none focus:border-primary/60 max-w-[140px] truncate"
+              title="Modell wechseln"
+            >
+              {models.map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+          ) : (
+            <span className="text-[11px] text-muted-foreground truncate max-w-[130px]" title={currentModel}>
+              {currentModel}
+            </span>
+          )}
+          <button
+            onClick={() => setJudgeEnabled((v) => !v)}
+            title={judgeEnabled ? "LLM-as-a-Judge deaktivieren" : "LLM-as-a-Judge aktivieren"}
+            className={`shrink-0 rounded-md px-1.5 py-1 text-[13px] border transition-colors ${
+              judgeEnabled
+                ? "border-amber-500/60 bg-amber-500/15 text-amber-600"
+                : "border-border bg-transparent text-muted-foreground hover:text-foreground"
+            }`}
           >
-            {models.map((m) => (
-              <option key={m} value={m}>{m}</option>
-            ))}
-          </select>
-        ) : (
-          <span className="text-[11px] text-muted-foreground truncate max-w-[160px]" title={currentModel}>
-            {currentModel}
-          </span>
-        )}
+            ⚖️
+          </button>
+        </div>
       </div>
 
+      {/* Judge Settings Panel */}
+      {judgeEnabled && (
+        <div className="border-b border-sidebar-border bg-amber-500/5 px-3 py-2 space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-muted-foreground shrink-0 w-16">Modell:</span>
+            {judgeModels.length > 0 ? (
+              <select
+                value={judgeModel}
+                onChange={(e) => setJudgeModel(e.target.value)}
+                className="flex-1 rounded-md border border-border bg-input px-2 py-0.5 text-[11px] text-foreground outline-none focus:border-amber-500/60 min-w-0"
+              >
+                {judgeModels.map((m) => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type="text"
+                value={judgeModel}
+                onChange={(e) => setJudgeModel(e.target.value)}
+                placeholder="Modell-ID eingeben…"
+                className="flex-1 rounded-md border border-border bg-input px-2 py-0.5 text-[11px] text-foreground outline-none focus:border-amber-500/60 min-w-0"
+              />
+            )}
+          </div>
+          <div className="flex items-center gap-3 flex-wrap">
+            <span className="text-[11px] text-muted-foreground shrink-0">Stopp bei:</span>
+            <label className="flex items-center gap-1 text-[11px] cursor-pointer">
+              <input
+                type="radio"
+                name="stopMode"
+                checked={stopMode === "score"}
+                onChange={() => setStopMode("score")}
+                className="accent-amber-500"
+              />
+              Score ≥
+              <input
+                type="number"
+                min={1}
+                max={100}
+                value={scoreTarget}
+                onChange={(e) => setScoreTarget(Math.min(100, Math.max(1, Number(e.target.value))))}
+                disabled={stopMode !== "score"}
+                className="w-10 rounded border border-border bg-input px-1 py-0.5 text-[11px] text-center outline-none focus:border-amber-500/60 disabled:opacity-40"
+              />
+            </label>
+            <label className="flex items-center gap-1 text-[11px] cursor-pointer">
+              <input
+                type="radio"
+                name="stopMode"
+                checked={stopMode === "iterations"}
+                onChange={() => setStopMode("iterations")}
+                className="accent-amber-500"
+              />
+              <input
+                type="number"
+                min={1}
+                max={10}
+                value={maxIter}
+                onChange={(e) => setMaxIter(Math.min(10, Math.max(1, Number(e.target.value))))}
+                disabled={stopMode !== "iterations"}
+                className="w-10 rounded border border-border bg-input px-1 py-0.5 text-[11px] text-center outline-none focus:border-amber-500/60 disabled:opacity-40"
+              />
+              Iterationen
+            </label>
+          </div>
+        </div>
+      )}
+
+      {/* Messages */}
       <div className="flex-1 space-y-3 overflow-y-auto p-3">
-        {messages.map((m, i) => (
-          <div key={i} className={m.role === "user" ? "flex justify-end" : "flex justify-start"}>
-            <div
-              className={`max-w-[90%] rounded-lg px-3 py-2 text-sm ${
-                m.role === "user"
-                  ? "bg-primary/15 text-foreground whitespace-pre-wrap"
-                  : "bg-accent text-accent-foreground"
-              }`}
-            >
-              {m.role === "user" ? m.text : renderMarkdown(m.text)}
-              {m.xml && (
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  <button
-                    onClick={() => {
+        {messages.map((m, i) => {
+          if (m.role === "info") {
+            return (
+              <div key={i} className="flex justify-center">
+                <span className="text-[11px] text-muted-foreground italic">{m.text}</span>
+              </div>
+            );
+          }
+
+          if (m.role === "judge") {
+            const isExpanded = expandedJudge.has(i);
+            const scoreLine = m.text.split("\n\n")[0];
+            return (
+              <div key={i} className="flex justify-start">
+                <div
+                  className="max-w-[90%] rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-foreground cursor-pointer select-none"
+                  onClick={() =>
+                    setExpandedJudge((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(i)) next.delete(i); else next.add(i);
+                      return next;
+                    })
+                  }
+                >
+                  <div className="flex items-center justify-between gap-2 text-amber-600 text-[11px] font-medium">
+                    <div className="flex items-center gap-1.5">
+                      <span>⚖️</span>
+                      <span>Judge-Bewertung</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      {renderMarkdown(scoreLine)}
+                      <span className="text-[10px] opacity-60">{isExpanded ? "▲" : "▼"}</span>
+                    </div>
+                  </div>
+                  {isExpanded && (
+                    <div className="mt-2 border-t border-amber-500/20 pt-2">
+                      {renderMarkdown(m.text.split("\n\n").slice(1).join("\n\n"))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          }
+
+          return (
+            <div key={i} className={m.role === "user" ? "flex justify-end" : "flex justify-start"}>
+              <div
+                className={`max-w-[90%] rounded-lg px-3 py-2 text-sm ${
+                  m.role === "user"
+                    ? "bg-primary/15 text-foreground whitespace-pre-wrap"
+                    : "bg-accent text-accent-foreground"
+                }`}
+              >
+                {m.role === "user" ? m.text : renderMarkdown(m.text)}
+                {m.xml && (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    <button
+                      onClick={() => {
                         try {
                           onApplyXml(m.xml!);
                         } catch (err) {
@@ -273,15 +563,16 @@ export function ChatPanel({
                           setMessages((prev) => [...prev, { role: "ai", text: `XML-Fehler: ${msg}` }]);
                         }
                       }}
-                    className="rounded-md bg-primary px-2 py-1 text-[11px] font-medium text-primary-foreground hover:opacity-90"
-                  >
-                    Als Graph übernehmen
-                  </button>
-                </div>
-              )}
+                      className="rounded-md bg-primary px-2 py-1 text-[11px] font-medium text-primary-foreground hover:opacity-90"
+                    >
+                      Als Graph übernehmen
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
         {loading && (
           <div className="flex justify-start">
             <div className="rounded-lg bg-accent px-3 py-2 text-sm text-accent-foreground">
@@ -289,8 +580,10 @@ export function ChatPanel({
             </div>
           </div>
         )}
+        <div ref={messagesEndRef} />
       </div>
 
+      {/* Input */}
       <div className="border-t border-sidebar-border p-2">
         <div className="flex gap-2">
           <textarea
@@ -309,13 +602,22 @@ export function ChatPanel({
             className="flex-1 rounded-md border border-border bg-input px-3 py-1.5 text-sm outline-none focus:border-primary/60 disabled:opacity-50"
             style={{ resize: "none", overflow: "hidden" }}
           />
-          <button
-            onClick={send}
-            disabled={loading}
-            className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
-          >
-            Senden
-          </button>
+          {loading ? (
+            <button
+              onClick={abort}
+              className="rounded-md bg-destructive px-3 py-1.5 text-sm font-medium text-destructive-foreground hover:opacity-90"
+            >
+              Abbrechen
+            </button>
+          ) : (
+            <button
+              onClick={send}
+              disabled={loading}
+              className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+            >
+              Senden
+            </button>
+          )}
         </div>
       </div>
     </aside>

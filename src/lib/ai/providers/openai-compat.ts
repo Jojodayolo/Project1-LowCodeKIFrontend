@@ -3,7 +3,7 @@ import type { AIConfig, AIProvider, ChatMessage } from "../types";
 export class OpenAICompatProvider implements AIProvider {
   constructor(private config: AIConfig) {}
 
-  async chat(messages: ChatMessage[]): Promise<string> {
+  async chat(messages: ChatMessage[], signal?: AbortSignal): Promise<string> {
     const url = `${this.config.baseUrl}/chat/completions`;
 
     let response: Response;
@@ -18,8 +18,10 @@ export class OpenAICompatProvider implements AIProvider {
           model: this.config.model,
           messages,
         }),
+        signal,
       });
-    } catch {
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") throw err;
       throw new Error(
         `Verbindung zu ${this.config.baseUrl} fehlgeschlagen. Ist der Server erreichbar?`
       );
